@@ -71,8 +71,19 @@
   }
   #panel input::placeholder { color: var(--muted); font-weight: 400; }
   #panel input:focus { border-color: var(--orange); background: var(--surface); }
-  #tripForm { display: flex; gap: 8px; }
-  #tripForm input { flex: 1; min-width: 0; }
+  #tripForm, .row { display: flex; gap: 8px; }
+  #tripForm input, .row input { flex: 1; min-width: 0; }
+  #stopList {
+    list-style: none; margin: 0; padding: 0; border-radius: 16px; overflow: hidden;
+    border: 1px solid var(--line); background: var(--surface);
+  }
+  #stopList:empty { display: none; }
+  #stopList button {
+    width: 100%; text-align: left; font-size: 15px; font-weight: 600; padding: 10px 16px;
+    border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--ink);
+  }
+  #stopList li:last-child button { border-bottom: 0; }
+  #stopList small { display: block; margin-top: 1px; color: var(--muted); font-weight: 500; }
   #tripForm button {
     flex: none; height: 46px; padding: 0 20px; border: 0; border-radius: 16px;
     font-size: 15px; font-weight: 700; color: #fff; background: var(--orange);
@@ -221,7 +232,11 @@
     <input id="destInput" type="search" placeholder="Where to? Type an address" autocomplete="off" enterkeyhint="search" aria-label="Destination address">
     <button type="submit">Go</button>
   </form>
-  <input id="busInput" type="search" placeholder="Line or bus number, e.g. 205" autocomplete="off" aria-label="Line or bus number">
+  <div class="row">
+    <input id="stopInput" type="search" placeholder="Stop name" autocomplete="off" aria-label="Stop name or code">
+    <input id="busInput" type="search" placeholder="Line or bus" autocomplete="off" aria-label="Line or bus number">
+  </div>
+  <ul id="stopList"></ul>
   <div id="arrivals"></div>
 </section>
 
@@ -302,6 +317,8 @@
   const panelToggle = document.getElementById('panelToggle');
   const busInput = document.getElementById('busInput');
   const arrivalsEl = document.getElementById('arrivals');
+  const stopInput = document.getElementById('stopInput');
+  const stopList = document.getElementById('stopList');
   const tripForm = document.getElementById('tripForm');
   const destInput = document.getElementById('destInput');
 
@@ -506,6 +523,142 @@
       : '<div class="arrival"' + style + '>' + inner + '</div>';
   }
 
+  // ---- Stop search: suggestions while typing, then the buses heading to that stop ----
+
+  let stopView = null;
+  // For each stop code, the lines that call there and its position in their stop order.
+  let stopLines = null;
+
+  // Lower case without accents, so "sao joao" finds "SÃO JOÃO".
+  function fold(text) {
+    return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  }
+
+  async function loadStopLines() {
+    const index = await loadLineIndex();
+    if (!stopLines) {
+      stopLines = new Map();
+      for (const key of Object.keys(index)) {
+        index[key].forEach((id, idx) => {
+          if (!stopLines.has(id)) stopLines.set(id, []);
+          stopLines.get(id).push({ key, idx, line: decodeURIComponent(key.slice(0, key.lastIndexOf('_'))), dir: Number(key.slice(key.lastIndexOf('_') + 1)) });
+        });
+      }
+    }
+    return index;
+  }
+
+  function linesAt(stopId) {
+    return [...new Set((stopLines.get(stopId) || []).map((l) => l.line))]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }
+
+  async function showSuggestions() {
+    const q = fold(stopInput.value.trim());
+    if (q.length < 2) { stopList.innerHTML = ''; return; }
+    let all;
+    try {
+      [all] = await Promise.all([loadStops(), loadStopLines()]);
+    } catch (err) {
+      stopList.innerHTML = '';
+      return;
+    }
+    if (q !== fold(stopInput.value.trim())) return;
+    // Only stops a line actually calls at; names that start with the typed text come first.
+    const hits = all.filter((st) => stopLines.has(st.id) && fold(st.name + ' ' + st.id).includes(q))
+      .sort((a, b) => fold(b.name).startsWith(q) - fold(a.name).startsWith(q) ||
+        a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+      .slice(0, 6);
+    stopList.innerHTML = hits.length
+      ? hits.map((st) =>
+        '<li><button type="button" data-id="' + escapeHtml(st.id) + '">' + escapeHtml(st.name) +
+        '<small>' + escapeHtml(st.id) + ' · lines ' + escapeHtml(linesAt(st.id).join(', ')) + '</small></button></li>').join('')
+      : '<li><button type="button" disabled>No stop matches<small>Try part of the name</small></button></li>';
+  }
+
+  async function openStop(stop) {
+    clearTrip();
+    destInput.value = '';
+    busInput.value = '';
+    save('bus', '');
+    stopInput.value = stop.name;
+    stopList.innerHTML = '';
+    const view = stopView = { stop, index: null, routes: new Map(), ready: false, results: [] };
+    render(lastBuses);
+    syncRoute();
+    selectStop(stop, true);
+    try {
+      view.index = await loadStopLines();
+      await Promise.all((stopLines.get(stop.id) || []).map((l) =>
+        loadRoute(l.line, l.dir).then((route) => view.routes.set(l.key, route)).catch(() => {})));
+    } catch (err) {
+      // Leaves the view with no routes; the panel then says nothing is on its way.
+    }
+    if (stopView !== view) return;
+    view.ready = true;
+    renderArrivals();
+  }
+
+  function closeStop() {
+    stopView = null;
+    selectedStop = null;
+    stopInput.value = '';
+    if (stopMarker) { map.removeLayer(stopMarker); stopMarker = null; }
+  }
+
+  // Live buses that have not reached the stop yet, soonest first.
+  function stopBuses(view) {
+    const now = Date.now();
+    const found = [];
+    for (const l of stopLines.get(view.stop.id) || []) {
+      const route = view.routes.get(l.key);
+      const at = route && route.stops[l.idx];
+      if (!at) continue;
+      for (const bus of lastBuses) {
+        if (bus.line !== l.line) continue;
+        const dir = directionOf(bus);
+        const busKey = view.index[l.line + '_' + dir] ? l.line + '_' + dir : l.line + '_' + (1 - dir);
+        if (busKey !== l.key) continue;
+        if (bus.time && now - Date.parse(bus.time) > STALE_MS) continue;
+        const p = projectOnto(route, bus.lat, bus.lon, 0);
+        if (p.d2 > 250 * 250 || p.dist > at.dist + 30) continue;
+        found.push({
+          bus,
+          minutes: Math.round((at.dist - p.dist) / 1000 * DEFAULT_MIN_PER_KM),
+          end: route.stops[route.stops.length - 1].name,
+        });
+      }
+    }
+    // A stop can appear twice on a circular line; keep each bus once, at its sooner time.
+    found.sort((a, b) => a.minutes - b.minutes);
+    const seen = new Set();
+    return found.filter((r) => !seen.has(r.bus.id) && seen.add(r.bus.id)).slice(0, 8);
+  }
+
+  function renderStop() {
+    const view = stopView;
+    const title = 'Stop ' + escapeHtml(view.stop.name) + ' (' + escapeHtml(view.stop.id) + ')';
+    const close = '<button type="button" class="close" data-clear-stop aria-label="Close this stop">✕</button>';
+    if (!view.ready) {
+      arrivalsEl.innerHTML = '<div class="headline">' + close + title + '</div><p class="note">Finding buses…</p>';
+      return;
+    }
+    const rows = view.results = stopBuses(view);
+    const lines = linesAt(view.stop.id);
+    const first = rows[0];
+    arrivalsEl.innerHTML = '<div class="headline">' + close + title +
+      (first ? '<b>' + (first.minutes <= 0 ? 'now' : '~' + first.minutes + ' min') + '</b>next bus, line ' + escapeHtml(first.bus.line) : '') +
+      '</div>' +
+      (first ? '' : '<p class="note">No bus is on its way to this stop right now.</p>') +
+      rows.map((r) =>
+        '<button type="button" class="arrival trip" data-bus="' + escapeHtml(r.bus.id) + '">' +
+        '<span class="tag">' + escapeHtml(r.bus.line) + '</span>' +
+        '<span class="to">Bus ' + escapeHtml(r.bus.id) + '<small>towards ' + escapeHtml(r.end) + '</small></span>' +
+        '<span class="when"><b>' + (r.minutes <= 0 ? 'now' : '~' + r.minutes + ' min') + '</b></span></button>').join('') +
+      '<p class="fine">Lines at this stop: ' + escapeHtml(lines.join(', ') || 'none') +
+      '. Only buses already on the road are shown, with rough times from distance.</p>';
+  }
+
   // Where each line and direction ends, filled in as routes load.
   const lineEnds = new Map();
 
@@ -547,9 +700,10 @@
     if (trip) { renderTrip(); return; }
 
     if (q) { renderLine(q); return; }
+    if (stopView) { renderStop(); return; }
     if (!proxyBase || !selectedStop) {
       arrivalsEl.innerHTML = '<p class="note">Type an address to find the fastest bus from where you are, ' +
-        'type a line number to see its buses, or tap a bus on the map.</p>';
+        'search for a stop or a line, or tap a bus on the map.</p>';
       return;
     }
     if (arrivalsError && !arrivals) {
@@ -921,6 +1075,7 @@
 
   async function startTrip(query) {
     clearTrip();
+    closeStop();
     const t = trip = {
       status: 'searching', query, message: '', places: [], dest: null, origin: null,
       index: null, options: [], routes: new Map(), results: null,
@@ -1189,6 +1344,13 @@
   }
 
   panelToggle.addEventListener('click', () => setPanel(panel.hidden));
+  stopInput.addEventListener('input', showSuggestions);
+  stopInput.addEventListener('focus', () => { stopInput.select(); showSuggestions(); });
+  stopList.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-id]');
+    const stop = btn && stops && stops.find((st) => st.id === btn.dataset.id);
+    if (stop) { stopInput.blur(); openStop(stop); }
+  });
   busInput.addEventListener('input', () => {
     save('bus', busInput.value.trim());
     render(lastBuses);
@@ -1200,6 +1362,11 @@
     }
   });
   arrivalsEl.addEventListener('click', (e) => {
+    if (e.target.closest('[data-clear-stop]')) {
+      closeStop();
+      renderArrivals();
+      return;
+    }
     if (e.target.closest('[data-clear-trip]')) {
       clearTrip();
       destInput.value = '';

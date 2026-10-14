@@ -19,6 +19,9 @@ It is a single static web page with no backend, so it can be hosted for free on 
   labelled on the map.
 - **Highlight a stop:** tap a stop in the list of a followed bus to see a large
   "minutes until this stop" figure.
+- **Stop search:** start typing a stop name or code and pick from the suggestions, which show
+  each stop's code and lines. The app then lists the buses on their way to that stop, soonest
+  first.
 - **Line search:** type a line number to show only that line on the map and list its buses
   with the direction each is heading. Tap one to follow it.
 
