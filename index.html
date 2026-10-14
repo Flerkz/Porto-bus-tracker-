@@ -71,8 +71,17 @@
   }
   #panel input::placeholder { color: var(--muted); font-weight: 400; }
   #panel input:focus { border-color: var(--orange); background: var(--surface); }
-  #tripForm, .row { display: flex; gap: 8px; }
-  #tripForm input, .row input { flex: 1; min-width: 0; }
+  #panel [hidden] { display: none !important; }
+  .tabs { display: flex; gap: 4px; padding: 4px; border-radius: 16px; background: var(--field); }
+  .tabs button {
+    flex: 1; height: 36px; padding: 0 4px; border: 0; border-radius: 12px; background: none;
+    font-size: 13px; font-weight: 600; color: var(--muted); white-space: nowrap;
+  }
+  .tabs button[aria-selected="true"] {
+    color: var(--ink); background: var(--surface); box-shadow: 0 2px 6px rgba(15, 61, 62, 0.12);
+  }
+  #tripForm { display: flex; gap: 8px; }
+  #tripForm input { flex: 1; min-width: 0; }
   #stopList {
     list-style: none; margin: 0; padding: 0; border-radius: 16px; overflow: hidden;
     border: 1px solid var(--line); background: var(--surface);
@@ -127,11 +136,6 @@
   .arrival .when small { color: var(--muted); display: block; font-weight: 500; }
   .arrival .go { color: var(--orange); font-weight: 700; font-size: 20px; }
 
-  #tripForm #pinButton {
-    width: 46px; padding: 0; display: grid; place-items: center;
-    color: #b45f12; background: var(--orange-soft); box-shadow: none;
-  }
-  #tripForm #pinButton[aria-pressed="true"] { color: #fff; background: var(--ink); }
   /* The pin stays put over the middle of the visible map while the map moves under it.
      Its zero-size box marks the exact spot the pin points at. */
   #centrePin {
@@ -154,6 +158,16 @@
     border: 0; border-radius: 14px; padding: 11px 16px; margin: 0 2px 8px;
     font-size: 14px; font-weight: 700; color: #b45f12; background: var(--orange-soft);
   }
+  .start-dot {
+    width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%;
+    background: #fff; border: 5px solid var(--ink); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+  .locate {
+    width: 40px; height: 40px; display: grid; place-items: center; padding: 0;
+    border: 0; border-radius: 14px; background: var(--surface); color: #2f7fe0;
+    box-shadow: var(--shadow); cursor: pointer;
+  }
+  .locate.off { color: #aebcbb; }
   .me-dot {
     width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%;
     background: #2f7fe0; border: 3px solid #fff;
@@ -249,18 +263,19 @@
 <div id="centrePin" hidden><div class="dest-pin"></div></div>
 <div id="status"><span id="count">Loading…</span><span id="updated"></span></div>
 <section id="panel" hidden>
-  <form id="tripForm">
+  <div class="tabs" role="tablist" aria-label="Search by">
+    <button type="button" role="tab" data-mode="address" aria-selected="false">Address</button>
+    <button type="button" role="tab" data-mode="pin" aria-selected="false">Pin</button>
+    <button type="button" role="tab" data-mode="stop" aria-selected="false">Stop</button>
+    <button type="button" role="tab" data-mode="bus" aria-selected="false">Bus / line</button>
+  </div>
+  <form id="tripForm" data-for="address">
     <input id="destInput" type="search" placeholder="Where to? Type an address" autocomplete="off" enterkeyhint="search" aria-label="Destination address">
     <button type="submit">Go</button>
-    <button type="button" id="pinButton" aria-pressed="false" aria-label="Pick a place on the map" title="Pick a place on the map">
-      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>
-    </button>
   </form>
-  <div class="row">
-    <input id="stopInput" type="search" placeholder="Stop name" autocomplete="off" aria-label="Stop name or code">
-    <input id="busInput" type="search" placeholder="Line or bus" autocomplete="off" aria-label="Line or bus number">
-  </div>
-  <ul id="stopList"></ul>
+  <input id="stopInput" data-for="stop" type="search" placeholder="Stop name or code" autocomplete="off" aria-label="Stop name or code">
+  <ul id="stopList" data-for="stop"></ul>
+  <input id="busInput" data-for="bus" type="search" placeholder="Line or bus number, e.g. 205" autocomplete="off" aria-label="Line or bus number">
   <div id="arrivals"></div>
 </section>
 
@@ -345,13 +360,20 @@
   const stopList = document.getElementById('stopList');
   const tripForm = document.getElementById('tripForm');
   const destInput = document.getElementById('destInput');
-  const pinButton = document.getElementById('pinButton');
 
   function load(key) { try { return localStorage.getItem(key) || ''; } catch (e) { return ''; } }
   function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
 
   let selectedLine = load('line');
   let lastBuses = [];
+  // Which search tab is open: address, pin, stop or bus.
+  let mode = '';
+  const MODE_HINTS = {
+    address: 'Type an address and tap Go to see the fastest buses from where you are.',
+    pin: '',
+    stop: 'Start typing a stop name and pick it from the suggestions.',
+    bus: 'Type a line, such as 205, or a bus number. You can also tap a bus on the map.',
+  };
 
   const BUS_COLOR = '#14645f';
   const ROUTE_COLOR = '#f7943a';
@@ -723,24 +745,21 @@
     const bus = q && lastBuses.find((b) => b.id.toUpperCase() === q);
     if (bus) { renderRoute(bus); return; }
     if (pinMode) {
-      arrivalsEl.innerHTML = '<p class="note">Move the map until the pin sits on the place you want to go.</p>' +
-        '<button type="button" class="soft-button primary" data-pin="to">Find buses to this place</button>' +
-        '<button type="button" class="soft-button" data-pin="from">Start from here instead</button>';
+      arrivalsEl.innerHTML = customOrigin
+        ? '<p class="note">Starting point set. Now move the map until the pin sits on your destination.</p>' +
+          '<button type="button" class="soft-button primary" data-pin="to">Find buses to this place</button>' +
+          '<button type="button" class="soft-button" data-clear-origin>Start from my location instead</button>'
+        : '<p class="note">Move the map until the pin sits on the place you want to go.</p>' +
+          '<button type="button" class="soft-button primary" data-pin="to">Find buses to this place</button>' +
+          '<button type="button" class="soft-button" data-pin="from">Start from here instead</button>';
       return;
     }
     if (trip) { renderTrip(); return; }
 
     if (q) { renderLine(q); return; }
     if (stopView) { renderStop(); return; }
-    if (customOrigin) {
-      arrivalsEl.innerHTML = '<p class="note">Starting point pinned. Now type an address above, ' +
-        'or use the pin button to choose the destination on the map.</p>' +
-        '<button type="button" class="soft-button" data-clear-origin>Use my location instead</button>';
-      return;
-    }
     if (!proxyBase || !selectedStop) {
-      arrivalsEl.innerHTML = '<p class="note">Type an address to find the fastest bus from where you are, ' +
-        'search for a stop or a line, or tap a bus on the map. The pin button lets you pick a place on the map.</p>';
+      arrivalsEl.innerHTML = '<p class="note">' + escapeHtml(MODE_HINTS[mode] || MODE_HINTS.address) + '</p>';
       return;
     }
     if (arrivalsError && !arrivals) {
@@ -1100,7 +1119,11 @@
         return;
       }
       navigator.geolocation.getCurrentPosition(
-        (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+        (p) => {
+          showMe(p);
+          watchMe();
+          resolve({ lat: p.coords.latitude, lon: p.coords.longitude });
+        },
         (err) => reject(new Error(err.code === 1
           ? 'Location access was not allowed.'
           : 'Your location could not be found.')),
@@ -1110,7 +1133,7 @@
 
   function originMarker(o) {
     return L.marker([o.lat, o.lon], {
-      icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="me-dot"></div>' }),
+      icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="start-dot"></div>' }),
       zIndexOffset: 2500,
     }).bindPopup('Your starting point');
   }
@@ -1273,7 +1296,7 @@
     const points = [];
     if (t.origin) {
       points.push([t.origin.lat, t.origin.lon]);
-      originMarker(t.origin).addTo(tripLayer);
+      if (t.originPinned) originMarker(t.origin).addTo(tripLayer);
     }
     if (t.dest) {
       points.push([t.dest.lat, t.dest.lon]);
@@ -1383,7 +1406,8 @@
       '<small>No bus on the way right now · get off at ' + escapeHtml(r.alightStop.name) + '</small></span></div>').join('');
     if (t.options.length) {
       html += '<p class="fine">Direct buses only, fastest first. Tap one to follow it. Times are rough estimates ' +
-        'from distance, and walking is measured in a straight line.</p>';
+        'from distance, and walking is measured in a straight line.' +
+        (mode === 'pin' ? ' Tap Pin again to choose another place.' : '') + '</p>';
     }
     arrivalsEl.innerHTML = html;
   }
@@ -1394,7 +1418,6 @@
 
   function setPinMode(on) {
     pinMode = on;
-    pinButton.setAttribute('aria-pressed', String(on));
     centrePin.hidden = !on;
     if (on && panel.hidden) setPanel(true);
     renderArrivals();
@@ -1408,7 +1431,6 @@
     return { lat: at.lat, lon: at.lng };
   }
 
-  pinButton.addEventListener('click', () => setPinMode(!pinMode));
 
   tripForm.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -1420,7 +1442,95 @@
 
   map.on('zoomend', () => { if (routeView) updateRoute(); });
 
+  // ---- The user's own position: a blue dot that follows them once location is in use ----
+
+  let meMarker = null;
+  let meCircle = null;
+  let watchId = null;
+  let centreOnFix = false;
+
+  function showMe(p) {
+    const at = [p.coords.latitude, p.coords.longitude];
+    const radius = Math.min(p.coords.accuracy || 0, 300);
+    if (!meMarker) {
+      meCircle = L.circle(at, {
+        radius, weight: 1, color: '#2f7fe0', fillColor: '#2f7fe0', fillOpacity: 0.1, interactive: false,
+      }).addTo(map);
+      meMarker = L.marker(at, {
+        icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="me-dot"></div>' }),
+        zIndexOffset: 2400, interactive: false, keyboard: false,
+      }).addTo(map);
+    } else {
+      meMarker.setLatLng(at);
+      meCircle.setLatLng(at).setRadius(radius);
+    }
+    locateButton.classList.remove('off');
+    if (centreOnFix) {
+      centreOnFix = false;
+      map.fitBounds([at, at], Object.assign(viewPadding(), { maxZoom: Math.max(map.getZoom(), 16) }));
+    }
+  }
+
+  function watchMe() {
+    if (watchId !== null || !navigator.geolocation) return;
+    watchId = navigator.geolocation.watchPosition(showMe, (err) => {
+      if (err.code === 1) {
+        locateButton.classList.add('off');
+        locateButton.title = 'Location access is off';
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+    }, { enableHighAccuracy: true, maximumAge: 10000 });
+  }
+
+  // A button on the map that shows where the user is and centres the map there.
+  const locateButton = L.DomUtil.create('button', 'locate');
+  locateButton.type = 'button';
+  locateButton.title = 'Show my location';
+  locateButton.setAttribute('aria-label', 'Show my location');
+  locateButton.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" ' +
+    'd="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9 3h-2.07A7 7 0 0 0 13 5.07V3h-2v2.07A7 7 0 0 0 5.07 11H3v2h2.07A7 7 0 0 0 ' +
+    '11 18.93V21h2v-2.07A7 7 0 0 0 18.93 13H21v-2zm-9 6a5 5 0 1 1 0-10 5 5 0 0 1 0 10z"/></svg>';
+  L.DomEvent.disableClickPropagation(locateButton);
+  locateButton.addEventListener('click', () => {
+    if (meMarker) {
+      map.fitBounds([meMarker.getLatLng(), meMarker.getLatLng()], Object.assign(viewPadding(), { maxZoom: Math.max(map.getZoom(), 16) }));
+    } else {
+      centreOnFix = true;
+    }
+    watchMe();
+  });
+  const LocateControl = L.Control.extend({ onAdd: () => locateButton });
+  new LocateControl({ position: 'topright' }).addTo(map);
+
+  // Show the dot from the start; the browser asks for permission the first time.
+  watchMe();
+
+  // Each tab starts fresh, so results from different searches never show at the same time.
+  function setMode(next) {
+    if (next === mode && next !== 'pin') return;
+    mode = next;
+    save('mode', next);
+    document.querySelectorAll('[data-mode]').forEach((tab) =>
+      tab.setAttribute('aria-selected', String(tab.dataset.mode === next)));
+    panel.querySelectorAll('[data-for]').forEach((el) => { el.hidden = el.dataset.for !== next; });
+    customOrigin = null;
+    clearTrip();
+    closeStop();
+    destInput.value = '';
+    stopList.innerHTML = '';
+    busInput.value = '';
+    save('bus', '');
+    render(lastBuses);
+    setPinMode(next === 'pin');
+    syncRoute();
+  }
+
+  document.querySelectorAll('[data-mode]').forEach((tab) =>
+    tab.addEventListener('click', () => setMode(tab.dataset.mode)));
+
   function trackBus(id) {
+    if (pinMode) setPinMode(false);
     busInput.value = id;
     save('bus', id);
     if (panel.hidden) setPanel(true);
@@ -1464,9 +1574,13 @@
     const pinAction = e.target.closest('[data-pin]');
     if (pinAction && pinMode) {
       const point = pinTarget();
-      setPinMode(false);
-      if (pinAction.dataset.pin === 'to') startTripTo(point);
-      else setOrigin(point);
+      if (pinAction.dataset.pin === 'to') {
+        setPinMode(false);
+        startTripTo(point);
+      } else {
+        // The pin stays out so the destination can be picked next.
+        setOrigin(point);
+      }
       return;
     }
     if (e.target.closest('[data-clear-origin]')) {
@@ -1519,7 +1633,10 @@
     render(lastBuses);
   });
 
-  busInput.value = load('bus');
+  const savedBus = load('bus');
+  const savedMode = load('mode');
+  setMode(['address', 'stop', 'bus'].includes(savedMode) ? savedMode : 'address');
+  if (mode === 'bus') busInput.value = savedBus;
   if (load('panel')) setPanel(true);
 
   document.addEventListener('visibilitychange', () => {

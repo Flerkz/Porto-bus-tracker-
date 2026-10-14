@@ -8,6 +8,13 @@ It is a single static web page with no backend, so it can be hosted for free on 
 
 ## What it does
 
+The search panel has four tabs: **Address**, **Pin**, **Stop** and **Bus / line**. Only the
+chosen tab's field is shown, and switching tabs clears the previous search.
+
+- **Your location:** a blue dot shows where you are from the moment the app opens and follows
+  you. The browser asks for permission the first time.
+  The location button on the map centres it.
+
 - **Trip search:** type an address and the app finds the direct buses from where you are,
   fastest first, with the stop to walk to, when the bus gets there, where to get off and the
   total time. Tap a result to follow that bus.
@@ -19,7 +26,7 @@ It is a single static web page with no backend, so it can be hosted for free on 
   labelled on the map.
 - **Highlight a stop:** tap a stop in the list of a followed bus to see a large
   "minutes until this stop" figure.
-- **Pin on the map:** the pin button puts a pin in the middle of the map. Slide the map under
+- **Pin on the map:** the Pin tab puts a pin in the middle of the map. Slide the map under
   it and confirm to search for buses to that spot, which works for places the address search
   does not know. The same pin can set the starting point instead of your location.
 - **Stop search:** start typing a stop name or code and pick from the suggestions, which show
