@@ -57,7 +57,7 @@
 
   #panel {
     position: fixed; z-index: 1000; left: 0; right: 0; bottom: 0; box-sizing: border-box;
-    max-height: 48vh; display: flex; flex-direction: column; gap: 10px;
+    max-height: 56vh; display: flex; flex-direction: column; gap: 10px;
     padding: 18px 16px calc(14px + env(safe-area-inset-bottom));
     border-radius: 28px 28px 0 0; background: var(--surface);
     box-shadow: 0 -10px 30px rgba(15, 61, 62, 0.14);
@@ -71,8 +71,15 @@
   }
   #panel input::placeholder { color: var(--muted); font-weight: 400; }
   #panel input:focus { border-color: var(--orange); background: var(--surface); }
+  #tripForm, .row { display: flex; gap: 8px; }
+  #tripForm input, .row input { flex: 1; min-width: 0; }
+  #tripForm button {
+    flex: none; height: 46px; padding: 0 20px; border: 0; border-radius: 16px;
+    font-size: 15px; font-weight: 700; color: #fff; background: var(--orange);
+    box-shadow: 0 4px 12px rgba(247, 148, 58, 0.35);
+  }
   #stopList {
-    list-style: none; margin: 8px 0 0; padding: 0; border-radius: 16px; overflow: hidden;
+    list-style: none; margin: 0; padding: 0; border-radius: 16px; overflow: hidden;
     border: 1px solid var(--line); background: var(--surface);
   }
   #stopList:empty { display: none; }
@@ -119,6 +126,25 @@
   .arrival .when b { font-size: 15px; font-weight: 700; }
   .arrival .when small { color: var(--muted); display: block; font-weight: 500; }
   .arrival .go { color: var(--orange); font-weight: 700; font-size: 20px; }
+
+  /* Trip results: two lines of text per card. */
+  .trip .to { white-space: normal; }
+  .trip .to small { display: block; margin-top: 2px; font-weight: 500; color: var(--muted); }
+  .trip.idle { opacity: 0.7; }
+  .soft-button {
+    border: 0; border-radius: 14px; padding: 11px 16px; margin: 0 2px 8px;
+    font-size: 14px; font-weight: 700; color: #b45f12; background: var(--orange-soft);
+  }
+  .me-dot {
+    width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%;
+    background: #2f7fe0; border: 3px solid #fff;
+    box-shadow: 0 0 0 6px rgba(47, 127, 224, 0.22), 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+  .dest-pin {
+    width: 24px; height: 24px; box-sizing: border-box; border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg); background: var(--orange); border: 4px solid #fff;
+    box-shadow: 0 3px 8px rgba(15, 61, 62, 0.4);
+  }
 
   /* The stops ahead: a rail of dots on the left with one card per stop. */
   .stops { position: relative; padding-left: 30px; }
@@ -202,11 +228,15 @@
 </header>
 <div id="status"><span id="count">Loading…</span><span id="updated"></span></div>
 <section id="panel" hidden>
-  <div>
-    <input id="stopInput" type="search" placeholder="Stop name or code" autocomplete="off" aria-label="Stop name or code">
-    <ul id="stopList"></ul>
+  <form id="tripForm">
+    <input id="destInput" type="search" placeholder="Where to? Type an address" autocomplete="off" enterkeyhint="search" aria-label="Destination address">
+    <button type="submit">Go</button>
+  </form>
+  <div class="row">
+    <input id="stopInput" type="search" placeholder="Stop" autocomplete="off" aria-label="Stop name or code">
+    <input id="busInput" type="search" placeholder="Bus or line" autocomplete="off" aria-label="Bus or line number">
   </div>
-  <input id="busInput" type="search" placeholder="Bus number or line, or tap a bus" autocomplete="off" aria-label="Bus or line number">
+  <ul id="stopList"></ul>
   <div id="arrivals"></div>
 </section>
 
@@ -289,6 +319,8 @@
   const stopList = document.getElementById('stopList');
   const busInput = document.getElementById('busInput');
   const arrivalsEl = document.getElementById('arrivals');
+  const tripForm = document.getElementById('tripForm');
+  const destInput = document.getElementById('destInput');
 
   function load(key) { try { return localStorage.getItem(key) || ''; } catch (e) { return ''; } }
   function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
@@ -519,12 +551,13 @@
     const q = busQuery();
     const bus = q && lastBuses.find((b) => b.id.toUpperCase() === q);
     if (bus) { renderRoute(bus); return; }
+    if (trip) { renderTrip(); return; }
 
     if (!proxyBase) {
       arrivalsEl.innerHTML = '<p class="note">' + (q
         ? 'Bus ' + escapeHtml(q) + ' is not in service right now. '
-        : 'Tap a bus on the map, or type its number, to see its route and the time to each stop. ') +
-        'Listing every bus due at a stop needs the optional helper (worker.js).</p>';
+        : 'Type an address to find the fastest bus from where you are, or tap a bus on the map to see its route.') +
+        '</p>';
       return;
     }
     if (!selectedStop) {
@@ -850,6 +883,305 @@
         : '') + '</p>';
   }
 
+  // ---- Trip search: direct buses from where the user is to an address ----
+
+  const WALK_RADIUS_M = 600;
+  // Straight-line metres covered per minute on foot, leaving room for corners and crossings.
+  const WALK_M_PER_MIN = 65;
+  const TOO_FAR_M = 3000;
+  // Address search is limited to this box around Porto (west, north, east, south).
+  const SEARCH_BOX = '-8.78,41.32,-8.45,41.03';
+  const tripLayer = L.layerGroup().addTo(map);
+  let trip = null;
+  let lineIndex = null;
+
+  function metres(aLat, aLon, bLat, bLon) {
+    const a = toXY(aLat, aLon);
+    const b = toXY(bLat, bLon);
+    return Math.hypot(a[0] - b[0], a[1] - b[1]);
+  }
+
+  function walkMinutes(m) { return Math.max(1, Math.round(m / WALK_M_PER_MIN)); }
+
+  // Which stops each line serves, in travel order: { "205_0": [stop ids], ... }.
+  function loadLineIndex() {
+    if (!lineIndex) {
+      lineIndex = fetch('lines.json').then(okJson);
+      lineIndex.catch(() => { lineIndex = null; });
+    }
+    return lineIndex;
+  }
+
+  function locate() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('This browser cannot share its location.'));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (p) => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+        (err) => reject(new Error(err.code === 1
+          ? 'Location access was not allowed.'
+          : 'Your location could not be found.')),
+        { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 });
+    });
+  }
+
+  function clearTrip() {
+    trip = null;
+    tripLayer.clearLayers();
+  }
+
+  async function startTrip(query) {
+    clearTrip();
+    const t = trip = {
+      status: 'searching', query, message: '', places: [], dest: null, origin: null,
+      index: null, options: [], routes: new Map(), results: null,
+    };
+    busInput.value = '';
+    save('bus', '');
+    render(lastBuses);
+    syncRoute();
+    try {
+      // The typed address goes to OpenStreetMap's search service. The user's location does not.
+      const places = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5' +
+        '&countrycodes=pt&bounded=1&viewbox=' + SEARCH_BOX + '&q=' + encodeURIComponent(query)).then(okJson);
+      if (trip !== t) return;
+      if (!places.length) {
+        t.status = 'error';
+        t.message = 'No place matching "' + query + '" was found in the Porto area.';
+        renderArrivals();
+        return;
+      }
+      t.places = places.map((p) => ({
+        lat: Number(p.lat), lon: Number(p.lon),
+        label: p.display_name.split(',').slice(0, 2).join(',').trim(),
+        detail: p.display_name.split(',').slice(2, 5).join(',').trim(),
+      }));
+      if (t.places.length === 1) {
+        chooseDestination(t, 0);
+      } else {
+        t.status = 'choose';
+        renderArrivals();
+      }
+    } catch (err) {
+      if (trip !== t) return;
+      t.status = 'error';
+      t.message = 'The address search did not answer. Try again in a moment.';
+      renderArrivals();
+    }
+  }
+
+  async function chooseDestination(t, i) {
+    t.dest = t.places[i];
+    if (!t.origin) {
+      t.status = 'locating';
+      renderArrivals();
+      try {
+        t.origin = await locate();
+      } catch (err) {
+        if (trip !== t) return;
+        t.status = 'nolocation';
+        t.message = err.message;
+        drawTrip(t);
+        renderArrivals();
+        return;
+      }
+      if (trip !== t) return;
+    }
+    planTrip(t);
+  }
+
+  // Stops within walking distance of a point, or the three nearest when none are that close.
+  function nearStops(all, lat, lon) {
+    const ranked = all.map((stop) => ({ stop, m: metres(lat, lon, stop.lat, stop.lon) }))
+      .sort((a, b) => a.m - b.m);
+    const close = ranked.filter((r) => r.m <= WALK_RADIUS_M);
+    return new Map((close.length ? close : ranked.slice(0, 3)).map((r) => [r.stop.id, r]));
+  }
+
+  async function planTrip(t) {
+    t.status = 'planning';
+    renderArrivals();
+    try {
+      const [all, index] = await Promise.all([loadStops(), loadLineIndex()]);
+      if (trip !== t) return;
+      t.index = index;
+      const from = nearStops(all, t.origin.lat, t.origin.lon);
+      const to = nearStops(all, t.dest.lat, t.dest.lon);
+      if (Math.min(...[...from.values()].map((r) => r.m)) > TOO_FAR_M) {
+        t.status = 'nolocation';
+        t.message = 'You seem to be outside the area these buses cover.';
+        drawTrip(t);
+        renderArrivals();
+        return;
+      }
+      // For each line and direction, the boarding and alighting stops with the least walking,
+      // where boarding comes before alighting along the route.
+      const options = [];
+      for (const key of Object.keys(index)) {
+        let board = null;
+        let best = null;
+        index[key].forEach((id, i) => {
+          const off = to.get(id);
+          if (off && board && (!best || board.m + off.m < best.walk)) {
+            best = { walk: board.m + off.m, boardIdx: board.i, boardWalk: board.m, alightIdx: i, alightWalk: off.m };
+          }
+          const on = from.get(id);
+          if (on && (!board || on.m < board.m)) board = { i, m: on.m };
+        });
+        if (best) {
+          const cutAt = key.lastIndexOf('_');
+          options.push(Object.assign({ key, line: decodeURIComponent(key.slice(0, cutAt)), dir: Number(key.slice(cutAt + 1)) }, best));
+        }
+      }
+      options.sort((a, b) => a.walk - b.walk);
+      t.options = options.slice(0, 12);
+      await Promise.all(t.options.map((o) =>
+        loadRoute(o.line, o.dir).then((route) => t.routes.set(o.key, route)).catch(() => {})));
+      if (trip !== t) return;
+      t.status = 'ready';
+      drawTrip(t);
+      renderArrivals();
+    } catch (err) {
+      if (trip !== t) return;
+      t.status = 'error';
+      t.message = 'Could not load the route data (' + err.message + ').';
+      renderArrivals();
+    }
+  }
+
+  function drawTrip(t) {
+    tripLayer.clearLayers();
+    const points = [];
+    if (t.origin) {
+      points.push([t.origin.lat, t.origin.lon]);
+      L.marker(points[0], {
+        icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="me-dot"></div>' }),
+        zIndexOffset: 2500,
+      }).bindPopup('Your starting point').addTo(tripLayer);
+    }
+    if (t.dest) {
+      points.push([t.dest.lat, t.dest.lon]);
+      L.marker([t.dest.lat, t.dest.lon], {
+        icon: L.divIcon({ className: '', iconSize: [24, 24], iconAnchor: [12, 26], html: '<div class="dest-pin"></div>' }),
+        zIndexOffset: 2600,
+      }).bindPopup('<b>' + escapeHtml(t.dest.label) + '</b>').addTo(tripLayer);
+    }
+    if (points.length) map.fitBounds(points, Object.assign(viewPadding(30), { maxZoom: 16 }));
+  }
+
+  // The live buses that can still be caught, fastest arrival first.
+  function tripResults(t) {
+    const now = Date.now();
+    const found = [];
+    const idle = [];
+    for (const o of t.options) {
+      const route = t.routes.get(o.key);
+      const boardStop = route && route.stops[o.boardIdx];
+      const alightStop = route && route.stops[o.alightIdx];
+      if (!boardStop || !alightStop || alightStop.dist <= boardStop.dist) continue;
+      const walkTo = walkMinutes(o.boardWalk);
+      const walkFrom = walkMinutes(o.alightWalk);
+      const ride = (alightStop.dist - boardStop.dist) / 1000 * DEFAULT_MIN_PER_KM;
+      let best = null;
+      for (const bus of lastBuses) {
+        if (bus.line !== o.line) continue;
+        const dir = directionOf(bus);
+        const busKey = t.index[o.line + '_' + dir] ? o.line + '_' + dir : o.line + '_' + (1 - dir);
+        if (busKey !== o.key) continue;
+        if (bus.time && now - Date.parse(bus.time) > STALE_MS) continue;
+        const p = projectOnto(route, bus.lat, bus.lon, 0);
+        // Skip buses that are off the route (parked) or already past the boarding stop.
+        if (p.d2 > 250 * 250 || p.dist > boardStop.dist + 30) continue;
+        const wait = (boardStop.dist - p.dist) / 1000 * DEFAULT_MIN_PER_KM;
+        // Skip buses that reach the stop before the user can walk there.
+        if (wait + 1 < walkTo) continue;
+        if (!best || wait < best.wait) best = { bus, wait };
+      }
+      const base = { option: o, boardStop, alightStop, walkTo, walkFrom };
+      if (best) {
+        found.push(Object.assign(base, { bus: best.bus, wait: Math.round(best.wait), total: Math.round(best.wait + ride + walkFrom) }));
+      } else {
+        idle.push(base);
+      }
+    }
+    found.sort((a, b) => a.total - b.total);
+    // List each remaining line once, and only if it has no catchable bus above.
+    const seen = new Set(found.map((r) => r.option.line));
+    const quiet = [];
+    for (const r of idle) {
+      if (seen.has(r.option.line)) continue;
+      seen.add(r.option.line);
+      quiet.push(r);
+    }
+    return { found: found.slice(0, 5), idle: quiet.slice(0, 4) };
+  }
+
+  function tripHeadline(t, big, small) {
+    return '<div class="headline">' +
+      '<button type="button" class="close" data-clear-trip aria-label="Close this search">✕</button>' +
+      'To ' + escapeHtml(t.dest ? t.dest.label : t.query) +
+      (big ? '<b>' + escapeHtml(big) + '</b>' : '') + escapeHtml(small || '') + '</div>';
+  }
+
+  function renderTrip() {
+    const t = trip;
+    if (t.status === 'searching') { arrivalsEl.innerHTML = tripHeadline(t) + '<p class="note">Looking up the address…</p>'; return; }
+    if (t.status === 'locating') { arrivalsEl.innerHTML = tripHeadline(t) + '<p class="note">Finding your location…</p>'; return; }
+    if (t.status === 'planning') { arrivalsEl.innerHTML = tripHeadline(t) + '<p class="note">Finding buses…</p>'; return; }
+    if (t.status === 'error') { arrivalsEl.innerHTML = tripHeadline(t) + '<p class="note">' + escapeHtml(t.message) + '</p>'; return; }
+    if (t.status === 'choose') {
+      arrivalsEl.innerHTML = tripHeadline(t) + '<p class="note">Which one did you mean?</p>' +
+        t.places.map((p, i) =>
+          '<button type="button" class="arrival trip" data-place="' + i + '"><span class="to">' +
+          escapeHtml(p.label) + '<small>' + escapeHtml(p.detail) + '</small></span></button>').join('');
+      return;
+    }
+    if (t.status === 'nolocation') {
+      arrivalsEl.innerHTML = tripHeadline(t) +
+        '<p class="note">' + escapeHtml(t.message) + ' Move the map so your starting point is in the middle, then tap the button.</p>' +
+        '<button type="button" class="soft-button" data-origin-centre>Start from the middle of the map</button>';
+      return;
+    }
+
+    const results = t.results = tripResults(t);
+    const first = results.found[0];
+    let html = first
+      ? tripHeadline(t, '~' + first.total + ' min', 'fastest right now, on line ' + first.option.line)
+      : tripHeadline(t, '', '');
+    if (!t.options.length) {
+      html += '<p class="note">No direct bus links the stops near you with the stops near that address. ' +
+        'Trips that need a change of bus are not covered.</p>';
+    } else if (!first) {
+      html += '<p class="note">These lines go there, but none has a bus on the way to your stop right now.</p>';
+    }
+    html += results.found.map((r, i) =>
+      '<button type="button" class="arrival trip" data-trip="' + i + '">' +
+      '<span class="tag">' + escapeHtml(r.option.line) + '</span>' +
+      '<span class="to">' + escapeHtml(r.boardStop.name) + ' · ' + r.walkTo + ' min walk' +
+      '<small>Bus ' + (r.wait <= 0 ? 'arriving now' : 'in ~' + r.wait + ' min') + ' · get off at ' +
+      escapeHtml(r.alightStop.name) + ' · ' + r.walkFrom + ' min walk</small></span>' +
+      '<span class="when"><b>~' + r.total + ' min</b><small>in total</small></span></button>').join('');
+    html += results.idle.map((r) =>
+      '<div class="arrival trip idle"><span class="tag">' + escapeHtml(r.option.line) + '</span>' +
+      '<span class="to">' + escapeHtml(r.boardStop.name) + ' · ' + r.walkTo + ' min walk' +
+      '<small>No bus on the way right now · get off at ' + escapeHtml(r.alightStop.name) + '</small></span></div>').join('');
+    if (t.options.length) {
+      html += '<p class="fine">Direct buses only, fastest first. Tap one to follow it. Times are rough estimates ' +
+        'from distance, and walking is measured in a straight line.</p>';
+    }
+    arrivalsEl.innerHTML = html;
+  }
+
+  tripForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const query = destInput.value.trim();
+    if (query.length < 3) return;
+    destInput.blur();
+    startTrip(query);
+  });
+
   map.on('zoomend', () => { if (routeView) updateRoute(); });
 
   function trackBus(id) {
@@ -883,6 +1215,29 @@
     syncRoute();
   });
   arrivalsEl.addEventListener('click', (e) => {
+    if (e.target.closest('[data-clear-trip]')) {
+      clearTrip();
+      destInput.value = '';
+      renderArrivals();
+      return;
+    }
+    if (e.target.closest('[data-origin-centre]') && trip && trip.dest) {
+      const c = map.getCenter();
+      trip.origin = { lat: c.lat, lon: c.lng };
+      planTrip(trip);
+      return;
+    }
+    const place = e.target.closest('[data-place]');
+    if (place && trip) { chooseDestination(trip, Number(place.dataset.place)); return; }
+    const pick = e.target.closest('[data-trip]');
+    if (pick && trip && trip.results) {
+      const r = trip.results.found[Number(pick.dataset.trip)];
+      if (r) {
+        selectStop(r.boardStop, false);
+        trackBus(r.bus.id);
+      }
+      return;
+    }
     if (e.target.closest('[data-clear]')) {
       busInput.value = '';
       save('bus', '');
