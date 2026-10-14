@@ -3,76 +3,140 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#12355b">
+<meta name="theme-color" content="#d6f5ef">
 <title>Porto buses live</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap">
 <style>
-  html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  body { display: flex; flex-direction: column; background: #12355b; }
+  :root {
+    --ink: #0f3d3e; --text: #22302f; --muted: #6f8482; --line: #e3eeec; --field: #f3f8f7;
+    --surface: #fff; --orange: #f7943a; --orange-soft: #fde8d3;
+    --mint-1: #c4f0ea; --mint-2: #ecfbf6; --teal: #14645f;
+    --shadow: 0 10px 30px rgba(15, 61, 62, 0.14);
+    --sheet-h: 0px;
+  }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text); background: linear-gradient(160deg, #e3f7ef, #c9f1f2); overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button, select, input { font-family: inherit; }
+  #map { position: fixed; inset: 0; background: #eef5f4; }
+  /* A paler, calmer map so the route and buses stand out. */
+  .leaflet-tile-pane { filter: grayscale(0.6) brightness(1.07) contrast(0.9); }
+
   header {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 12px; padding-top: calc(8px + env(safe-area-inset-top));
-    color: #fff; background: #12355b;
+    position: fixed; z-index: 1000; left: 12px; right: 12px;
+    top: calc(12px + env(safe-area-inset-top));
+    display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px;
+    border-radius: 22px; background: var(--surface); box-shadow: var(--shadow);
   }
-  header h1 { font-size: 16px; margin: 0; flex: 1; white-space: nowrap; }
-  select, header button {
-    font-size: 16px; padding: 6px 8px; border-radius: 8px; border: 0;
-    background: #fff; color: #12355b;
+  header h1 {
+    font-size: 17px; font-weight: 700; letter-spacing: -0.02em; margin: 0; flex: 1; color: var(--ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  select { max-width: 34vw; }
-  header button[aria-expanded="true"] { background: #ffd23f; }
+  select, header button { font-size: 14px; font-weight: 600; height: 38px; padding: 0 14px; border-radius: 19px; }
+  select { max-width: 32vw; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+  header button { border: 0; background: var(--orange); color: #fff; box-shadow: 0 4px 12px rgba(247, 148, 58, 0.35); }
+  header button[aria-expanded="true"] { background: var(--orange-soft); color: #b45f12; box-shadow: none; }
 
-  #panel { background: #f3f6fa; padding: 10px 12px; display: grid; gap: 8px; }
-  #panel[hidden] { display: none; }
-  #panel input {
-    width: 100%; box-sizing: border-box; font-size: 16px; padding: 9px 10px;
-    border: 1px solid #b8c4d2; border-radius: 8px; background: #fff; color: #111;
-  }
-  #stopList { list-style: none; margin: 4px 0 0; padding: 0; }
-  #stopList button {
-    width: 100%; text-align: left; font-size: 15px; padding: 9px 10px;
-    border: 0; border-bottom: 1px solid #dde4ec; background: #fff; color: #111;
-  }
-  #stopList small { color: #5b6b7c; margin-left: 6px; }
-  #arrivals { max-height: 30vh; overflow-y: auto; font-size: 14px; color: #1c2733; }
-  #arrivals:empty { display: none; }
-  .headline {
-    background: #12355b; color: #fff; border-radius: 10px; padding: 10px 12px;
-    margin-bottom: 8px; font-size: 15px;
-  }
-  .headline b { font-size: 26px; display: block; }
-  .note { margin: 0 0 8px; color: #44515f; }
-  .arrival {
-    display: flex; align-items: center; gap: 10px;
-    padding: 7px 0; border-bottom: 1px solid #dde4ec;
-  }
-  .arrival .tag {
-    min-width: 40px; text-align: center; font-weight: 700; color: #fff;
-    border-radius: 6px; padding: 3px 4px; background: var(--c);
-  }
-  .arrival .to { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .arrival .when { text-align: right; white-space: nowrap; }
-  .arrival .when b { font-size: 16px; }
-  .arrival .when small { color: #5b6b7c; display: block; }
-  button.arrival {
-    width: 100%; border: 0; border-bottom: 1px solid #dde4ec; background: none;
-    font: inherit; color: inherit; text-align: left;
-  }
-  .arrival .dot {
-    width: 12px; height: 12px; box-sizing: border-box; flex: none;
-    border-radius: 50%; border: 3px solid var(--c); background: #fff;
-  }
-  .arrival.chosen { background: #fff3c4; }
-  .arrival .go { color: #12355b; font-weight: 700; }
-  .fine { margin: 8px 0 0; font-size: 12px; color: #5b6b7c; }
-
-  #map { flex: 1; min-height: 0; }
   #status {
-    padding: 6px 12px; padding-bottom: calc(6px + env(safe-area-inset-bottom));
-    font-size: 13px; color: #dbe7f3; background: #12355b;
-    display: flex; justify-content: space-between; gap: 8px;
+    position: fixed; z-index: 999; left: 16px; top: calc(78px + env(safe-area-inset-top));
+    display: flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px;
+    font-size: 12px; font-weight: 500; color: var(--muted); background: var(--surface);
+    box-shadow: 0 4px 12px rgba(15, 61, 62, 0.12);
   }
-  #status.error { background: #8a1c1c; color: #fff; }
+  #status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #2bb673; }
+  #count { color: var(--ink); font-weight: 700; }
+  #status.error { color: #fff; background: #d64545; }
+  #status.error #count { color: #fff; }
+  #status.error::before { background: #fff; }
+
+  #panel {
+    position: fixed; z-index: 1000; left: 0; right: 0; bottom: 0; box-sizing: border-box;
+    max-height: 48vh; display: flex; flex-direction: column; gap: 10px;
+    padding: 18px 16px calc(14px + env(safe-area-inset-bottom));
+    border-radius: 28px 28px 0 0; background: var(--surface);
+    box-shadow: 0 -10px 30px rgba(15, 61, 62, 0.14);
+  }
+  #panel[hidden] { display: none; }
+  #panel > * { flex: none; }
+  #panel input {
+    width: 100%; box-sizing: border-box; font-size: 16px; font-weight: 500; height: 46px;
+    padding: 0 16px; border: 1px solid var(--line); border-radius: 16px; outline: none;
+    background: var(--field); color: var(--ink);
+  }
+  #panel input::placeholder { color: var(--muted); font-weight: 400; }
+  #panel input:focus { border-color: var(--orange); background: var(--surface); }
+  #stopList {
+    list-style: none; margin: 8px 0 0; padding: 0; border-radius: 16px; overflow: hidden;
+    border: 1px solid var(--line); background: var(--surface);
+  }
+  #stopList:empty { display: none; }
+  #stopList button {
+    width: 100%; text-align: left; font-size: 15px; font-weight: 500; padding: 12px 16px;
+    border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--ink);
+  }
+  #stopList li:last-child button { border-bottom: 0; }
+  #stopList small { color: var(--muted); margin-left: 8px; font-weight: 400; }
+  #panel > #arrivals { flex: 1 1 auto; min-height: 0; overflow-y: auto; font-size: 14px; }
+  #arrivals:empty { display: none; }
+
+  .headline {
+    position: relative; border-radius: 20px; padding: 14px 50px 14px 16px; margin-bottom: 12px;
+    font-size: 13px; font-weight: 500; line-height: 1.4; color: var(--teal);
+    background: linear-gradient(135deg, var(--mint-1), var(--mint-2));
+  }
+  .headline b {
+    display: block; font-size: 32px; font-weight: 700; line-height: 1.15;
+    letter-spacing: -0.03em; margin-top: 2px; color: var(--ink);
+  }
+  .headline .close {
+    position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; padding: 0;
+    border-radius: 50%; border: 0; font-size: 13px; color: var(--ink); background: rgba(255, 255, 255, 0.85);
+  }
+  .note { margin: 2px 4px 10px; color: var(--muted); line-height: 1.5; }
+  .fine { margin: 10px 4px 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+
+  .arrival {
+    display: flex; align-items: center; gap: 12px; box-sizing: border-box;
+    padding: 12px 14px; margin-bottom: 8px;
+    border: 1px solid var(--line); border-radius: 18px; background: var(--surface);
+  }
+  button.arrival { width: 100%; font-size: inherit; color: inherit; text-align: left; }
+  .arrival .tag {
+    min-width: 42px; text-align: center; font-weight: 700; color: #fff;
+    border-radius: 10px; padding: 5px 6px; background: var(--teal);
+  }
+  .arrival .to {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 600; color: var(--ink);
+  }
+  .arrival .when { text-align: right; white-space: nowrap; color: var(--ink); }
+  .arrival .when b { font-size: 15px; font-weight: 700; }
+  .arrival .when small { color: var(--muted); display: block; font-weight: 500; }
+  .arrival .go { color: var(--orange); font-weight: 700; font-size: 20px; }
+
+  /* The stops ahead: a rail of dots on the left with one card per stop. */
+  .stops { position: relative; padding-left: 30px; }
+  .stops::before {
+    content: ""; position: absolute; left: 9px; top: 24px; bottom: 32px; width: 2px;
+    border-radius: 2px; background: linear-gradient(var(--orange), #dfe7e6 70px);
+  }
+  .stops .arrival { position: relative; }
+  .arrival .dot {
+    position: absolute; left: -27px; top: 50%; width: 14px; height: 14px; margin-top: -7px;
+    box-sizing: border-box; border-radius: 50%; border: 4px solid #dfe7e6; background: #aebcbb;
+  }
+  .stops .arrival:first-child .dot {
+    left: -29px; width: 18px; height: 18px; margin-top: -9px;
+    border: 5px solid var(--orange); background: #fff;
+  }
+  .arrival.chosen { border-color: transparent; background: linear-gradient(135deg, var(--mint-1), var(--mint-2)); }
+  .arrival.chosen .dot { border-color: var(--orange-soft); background: var(--orange); }
 
   .bus { position: relative; width: 40px; height: 40px; }
   .bus .dir {
@@ -86,47 +150,65 @@
   }
   .bus .pill {
     position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-    min-width: 22px; height: 22px; padding: 0 4px; box-sizing: border-box;
-    border-radius: 11px; border: 2px solid #fff; background: var(--c); color: #fff;
-    font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+    min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box;
+    border-radius: 13px; border: 2px solid #fff; background: var(--c); color: #fff;
+    font-size: 11px; font-weight: 700; line-height: 22px; text-align: center;
+    box-shadow: 0 4px 10px rgba(15, 61, 62, 0.3);
   }
   .bus.stale { opacity: 0.4; }
-  .bus.tracked .pill { border-color: #ffd23f; box-shadow: 0 0 0 4px rgba(255, 210, 63, 0.7), 0 1px 4px rgba(0, 0, 0, 0.45); }
+  .bus.tracked { --c: #f7943a !important; }
+  .bus.tracked .pill { box-shadow: 0 0 0 5px rgba(247, 148, 58, 0.28), 0 4px 10px rgba(15, 61, 62, 0.3); }
   .stop-pin {
-    width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%;
-    background: #fff; border: 5px solid #d62828; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    width: 20px; height: 20px; box-sizing: border-box; border-radius: 50%;
+    background: #fff; border: 6px solid var(--ink); box-shadow: 0 3px 8px rgba(15, 61, 62, 0.4);
   }
   .stop-label {
-    padding: 1px 6px; border-radius: 6px; border: 1px solid #12355b;
-    font-size: 11px; line-height: 1.35; color: #1c2733; white-space: nowrap;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    padding: 3px 9px; border-radius: 999px; border: 0;
+    font-family: inherit; font-size: 11px; font-weight: 600; line-height: 1.35;
+    color: var(--ink); white-space: nowrap; box-shadow: 0 3px 10px rgba(15, 61, 62, 0.2);
   }
+  .stop-label::before { display: none; }
   .stop-label span {
     display: inline-block; max-width: 120px; overflow: hidden;
     text-overflow: ellipsis; vertical-align: bottom;
   }
-  .stop-label b { margin-left: 5px; color: #12355b; }
+  .stop-label b { margin-left: 6px; color: #d9741a; }
+  .leaflet-container { font-family: inherit; }
+  .leaflet-popup-content-wrapper { border-radius: 16px; box-shadow: var(--shadow); color: var(--ink); }
   .leaflet-marker-icon { transition: transform 1s linear; }
   .leaflet-zoom-anim .leaflet-marker-icon { transition: none; }
+
+  /* Keep the map's own controls clear of the top bar and the bottom sheet. */
+  .leaflet-top { top: calc(70px + env(safe-area-inset-top)); }
+  .leaflet-bottom { bottom: var(--sheet-h); }
+  .leaflet-bar { border: 0 !important; border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+  .leaflet-bar a { color: var(--ink); }
+  .leaflet-control-attribution { font-size: 10px; border-radius: 8px 0 0 0; }
+  @media (pointer: coarse) { .leaflet-control-zoom { display: none; } }
+
+  @media (min-width: 720px) {
+    header { right: auto; width: 390px; box-sizing: border-box; }
+    #panel { left: 12px; right: auto; bottom: 12px; width: 390px; max-height: 64vh; border-radius: 28px; box-shadow: var(--shadow); }
+    .leaflet-bottom { bottom: 0; }
+  }
 </style>
 </head>
 <body>
+<div id="map"></div>
 <header>
   <h1>Porto buses</h1>
   <select id="line" aria-label="Filter by line"><option value="">All lines</option></select>
-  <button id="panelToggle" type="button" aria-expanded="false" aria-controls="panel">Arrivals</button>
+  <button id="panelToggle" type="button" aria-expanded="false" aria-controls="panel">Search</button>
 </header>
+<div id="status"><span id="count">Loading…</span><span id="updated"></span></div>
 <section id="panel" hidden>
   <div>
     <input id="stopInput" type="search" placeholder="Stop name or code" autocomplete="off" aria-label="Stop name or code">
     <ul id="stopList"></ul>
   </div>
-  <input id="busInput" type="search" placeholder="Bus number or line, or tap a bus on the map" autocomplete="off" aria-label="Bus or line number">
+  <input id="busInput" type="search" placeholder="Bus number or line, or tap a bus" autocomplete="off" aria-label="Bus or line number">
   <div id="arrivals"></div>
 </section>
-<div id="map"></div>
-<div id="status"><span id="count">Loading…</span><span id="updated"></span></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -141,6 +223,8 @@
   const REFRESH_MS = 10000;
   const ARRIVALS_REFRESH_MS = 20000;
   const ROUTE_REFRESH_MS = 30000;
+  const NEXT_STOPS = 5;
+  const LABEL_OFFSET = { right: [7, 0], left: [-7, 0], top: [0, -7], bottom: [0, 7] };
   const STALE_MS = 3 * 60 * 1000;
   // Used only when STCP has no prediction for a bus: a typical city bus pace.
   const DEFAULT_MIN_PER_KM = 3.5;
@@ -169,14 +253,30 @@
   }
 
   const map = L.map('map', { zoomControl: false }).setView([41.155, -8.62], 13);
-  L.control.zoom({ position: 'bottomright' }).addTo(map);
+  L.control.zoom({ position: 'topright' }).addTo(map);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors | Bus data: STCP / Porto Digital',
   }).addTo(map);
 
-  // The arrivals panel grows and shrinks, which changes the map's height.
-  new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+  // The search sheet floats over the map. Its height is published to CSS so the map's
+  // attribution stays visible above it.
+  new ResizeObserver(() => {
+    const h = document.getElementById('panel').offsetHeight;
+    document.documentElement.style.setProperty('--sheet-h', h + 'px');
+  }).observe(document.getElementById('panel'));
+
+  // How much of the map is covered by the top bar and the sheet, for fitting things in view.
+  function viewPadding(sides) {
+    const sheet = document.getElementById('panel');
+    const top = document.querySelector('header').getBoundingClientRect().bottom + 14;
+    const wide = window.innerWidth >= 720;
+    const covered = sheet.hidden ? 0 : sheet.offsetHeight;
+    return {
+      paddingTopLeft: [(wide && !sheet.hidden ? 410 : 20) + (sides || 0), top + (sides ? 20 : 0)],
+      paddingBottomRight: [20 + (sides || 0), (wide ? 0 : covered) + 28 + (sides ? 20 : 0)],
+    };
+  }
 
   const markers = new Map();
   const lineSelect = document.getElementById('line');
@@ -196,11 +296,9 @@
   let selectedLine = load('line');
   let lastBuses = [];
 
-  function colorFor(line) {
-    let h = 0;
-    for (const ch of line) h = (h * 31 + ch.charCodeAt(0)) % 360;
-    return 'hsl(' + h + ', 65%, 38%)';
-  }
+  const BUS_COLOR = '#14645f';
+  const ROUTE_COLOR = '#f7943a';
+  function colorFor() { return BUS_COLOR; }
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => '&#' + c.charCodeAt(0) + ';');
@@ -278,7 +376,7 @@
       if (!seen.has(id)) { map.removeLayer(m); markers.delete(id); }
     }
     const parked = seen.size - live;
-    countEl.textContent = live + ' live' + (parked ? ', ' + parked + ' not reporting' : '');
+    countEl.textContent = live + ' live' + (parked ? ' · ' + parked + ' idle' : '');
   }
 
   async function refresh() {
@@ -290,7 +388,7 @@
       render(lastBuses);
       syncRoute();
       statusEl.classList.remove('error');
-      updatedEl.textContent = 'Updated ' + new Date().toLocaleTimeString();
+      updatedEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch (err) {
       statusEl.classList.add('error');
       updatedEl.textContent = 'No data: ' + err.message;
@@ -372,7 +470,8 @@
 
   function focusMap() {
     if (!selectedStop || routeView) return;
-    map.setView([selectedStop.lat, selectedStop.lon], Math.max(map.getZoom(), 16));
+    const here = [selectedStop.lat, selectedStop.lon];
+    map.fitBounds([here, here], Object.assign(viewPadding(), { maxZoom: Math.max(map.getZoom(), 16) }));
   }
 
   async function refreshArrivals() {
@@ -550,10 +649,10 @@
   }
 
   function drawRoute(view) {
-    const color = colorFor(view.line);
-    const path = L.polyline(view.data.coords, { color, weight: 5, opacity: 0.8 }).addTo(routeLayer);
+    const color = ROUTE_COLOR;
+    const path = L.polyline(view.data.coords, { color, weight: 4, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }).addTo(routeLayer);
     view.stopMarkers = view.data.stops.map((s) =>
-      L.circleMarker([s.lat, s.lon], { radius: 5, weight: 2, color, fillColor: '#fff', fillOpacity: 1 })
+      L.circleMarker([s.lat, s.lon], { radius: 5, weight: 2.5, color, fillColor: '#fff', fillOpacity: 1 })
         .bindPopup('')
         .bindTooltip('', { permanent: true, direction: 'right', offset: [7, 0], className: 'stop-label' })
         .addTo(routeLayer));
@@ -575,12 +674,15 @@
       if (view.data) { drawRoute(view); refreshAnchors(); }
     }
     updateRoute();
-    // Fit only after the stop list is on screen, because it changes the map's height.
+    // Fit only after the stop list is on screen, so the route clears the sheet.
     if (routeView && routeView.bounds && !routeView.fitted) {
       routeView.fitted = true;
       map.invalidateSize();
       // Extra room on the right, where the stop labels are drawn.
-      map.fitBounds(routeView.bounds, { paddingTopLeft: [25, 25], paddingBottomRight: [170, 25] });
+      // Zoom to the bus and its next few stops; the rest of the route stays drawn.
+      const focus = nextStops(routeEtas(routeView, bus)).map((e) => [e.stop.lat, e.stop.lon]);
+      focus.push([bus.lat, bus.lon]);
+      map.fitBounds(focus, Object.assign(viewPadding(70), { maxZoom: 17 }));
     }
   }
 
@@ -641,38 +743,61 @@
     });
   }
 
+  // Only the next few stops get a time, plus the stop the user picked if it is further on.
+  function nextStops(etas) {
+    const upcoming = etas.filter((e) => !e.passed);
+    const shown = upcoming.slice(0, NEXT_STOPS);
+    const mine = selectedStop && upcoming.find((e) => e.stop.id === selectedStop.id);
+    if (mine && !shown.includes(mine)) shown.push(mine);
+    return shown;
+  }
+
   function etaText(e) { return e.minutes <= 0 ? 'now' : '~' + e.minutes + ' min'; }
 
   function updateRoute() {
     const view = routeView;
     const bus = view && lastBuses.find((b) => b.id === view.busId);
     if (view && view.data && bus) {
-      const color = colorFor(view.line);
-      // Labels are always on for the stops ahead; where two would overlap on screen,
+      const color = ROUTE_COLOR;
+      // Labels are always on for the next few stops; where two would overlap on screen,
       // the later one is skipped so they stay readable. Zooming in brings it back.
       const etas = routeEtas(view, bus);
+      const wanted = new Set(nextStops(etas));
       const placed = [];
-      const labelled = new Set();
+      const labelled = new Map();
       const tryLabel = (i) => {
         const e = etas[i];
-        if (!e || e.passed || labelled.has(i)) return;
+        if (!e || !wanted.has(e) || labelled.has(i)) return;
         const pt = map.latLngToContainerPoint(view.stopMarkers[i].getLatLng());
-        // Approximate size of the label box drawn to the right of the stop.
-        const width = Math.min(e.stop.name.length * 6.4, 120) + etaText(e).length * 6.6 + 26;
-        const box = { l: pt.x, r: pt.x + width, t: pt.y - 12, b: pt.y + 12 };
-        if (placed.some((p) => box.l < p.r && p.l < box.r && box.t < p.b && p.t < box.b)) return;
-        placed.push(box);
-        labelled.add(i);
+        // Approximate size of the label, tried on each side of the stop until one is free.
+        const w = Math.min(e.stop.name.length * 6.6, 120) + etaText(e).length * 6.8 + 30;
+        const sides = {
+          right: { l: pt.x + 4, r: pt.x + 8 + w, t: pt.y - 13, b: pt.y + 13 },
+          left: { l: pt.x - 8 - w, r: pt.x - 4, t: pt.y - 13, b: pt.y + 13 },
+          top: { l: pt.x - w / 2, r: pt.x + w / 2, t: pt.y - 36, b: pt.y - 8 },
+          bottom: { l: pt.x - w / 2, r: pt.x + w / 2, t: pt.y + 8, b: pt.y + 36 },
+        };
+        for (const side of Object.keys(sides)) {
+          const box = sides[side];
+          if (placed.some((p) => box.l < p.r && p.l < box.r && box.t < p.b && p.t < box.b)) continue;
+          placed.push(box);
+          labelled.set(i, side);
+          return;
+        }
       };
       // The stop the user picked gets its label first, then the rest in travel order.
       if (selectedStop) tryLabel(etas.findIndex((e) => e.stop.id === selectedStop.id));
       etas.forEach((e, i) => tryLabel(i));
       etas.forEach((e, i) => {
         const marker = view.stopMarkers[i];
-        marker.setStyle(e.passed ? { color: '#9aa5b1', fillColor: '#e3e7ec' } : { color, fillColor: '#fff' });
+        marker.setStyle(e.passed ? { color: '#b9c6c5', fillColor: '#eef3f2' } : { color, fillColor: '#fff' });
         marker.setPopupContent('<b>' + escapeHtml(e.stop.name) + '</b><br>' +
           (e.passed ? 'Bus ' + escapeHtml(bus.id) + ' already passed' : 'Bus ' + escapeHtml(bus.id) + ': ' + etaText(e)));
         if (labelled.has(i)) {
+          const side = labelled.get(i);
+          const tip = marker.getTooltip();
+          tip.options.direction = side;
+          tip.options.offset = L.point(LABEL_OFFSET[side]);
           marker.setTooltipContent('<span>' + escapeHtml(e.stop.name) + '</span><b>' + etaText(e) + '</b>');
           marker.openTooltip();
         } else {
@@ -696,6 +821,7 @@
     }
     const etas = routeEtas(view, bus);
     const upcoming = etas.filter((e) => !e.passed);
+    const shown = nextStops(etas);
     const end = view.data.stops[view.data.stops.length - 1];
     let headline = title + ' to ' + escapeHtml(end.name);
     let note = '';
@@ -705,19 +831,23 @@
       else if (mine.passed) note = 'This bus has already passed ' + selectedStop.name + '.';
       else headline += '<b>' + etaText(mine) + '</b>until ' + escapeHtml(selectedStop.name);
     }
-    const color = colorFor(view.line);
-    arrivalsEl.innerHTML = '<div class="headline">' + headline + '</div>' +
+    const color = ROUTE_COLOR;
+    arrivalsEl.innerHTML = '<div class="headline">' +
+      '<button type="button" class="close" data-clear aria-label="Stop following this bus">✕</button>' +
+      headline + '</div>' +
       (note ? '<p class="note">' + escapeHtml(note) + '</p>' : '') +
-      upcoming.map((e) =>
+      '<div class="stops">' + shown.map((e) =>
         '<button type="button" class="arrival' + (selectedStop && selectedStop.id === e.stop.id ? ' chosen' : '') +
         '" data-stop="' + escapeHtml(e.stop.id) + '" style="--c:' + color + '">' +
         '<span class="dot"></span><span class="to">' + escapeHtml(e.stop.name) + '</span>' +
-        '<span class="when"><b>' + etaText(e) + '</b></span></button>').join('') +
+        '<span class="when"><b>' + etaText(e) + '</b></span></button>').join('') + '</div>' +
       '<p class="fine">' + (!proxyBase ? 'Rough estimates from the distance left and a typical bus pace.'
         : !view.checked ? 'Checking STCP predictions…'
         : view.anchors.length ? 'Based on STCP predictions for this bus; stops in between are estimated by distance.'
         : 'STCP has no prediction for this bus right now, so these are rough estimates from distance alone.') +
-      ' Tap a stop to highlight it. Clear the bus number to go back.</p>';
+      (upcoming.length > shown.length
+        ? ' Showing the next ' + Math.min(NEXT_STOPS, shown.length) + ' of ' + upcoming.length + ' stops left; search for a stop above to see a later one.'
+        : '') + '</p>';
   }
 
   map.on('zoomend', () => { if (routeView) updateRoute(); });
@@ -733,6 +863,7 @@
   function setPanel(open) {
     panel.hidden = !open;
     panelToggle.setAttribute('aria-expanded', String(open));
+    panelToggle.textContent = open ? 'Close' : 'Search';
     save('panel', open ? '1' : '');
     map.invalidateSize();
     if (open) { renderArrivals(); refreshArrivals(); }
@@ -752,6 +883,13 @@
     syncRoute();
   });
   arrivalsEl.addEventListener('click', (e) => {
+    if (e.target.closest('[data-clear]')) {
+      busInput.value = '';
+      save('bus', '');
+      render(lastBuses);
+      syncRoute();
+      return;
+    }
     const row = e.target.closest('button.arrival');
     if (!row) return;
     if (row.dataset.bus) { trackBus(row.dataset.bus); return; }
