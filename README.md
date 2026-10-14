@@ -8,15 +8,19 @@ It is a single static web page with no backend, so it can be hosted for free on 
 
 ## What it does
 
+- **Trip search:** type an address and the app finds the direct buses from where you are,
+  fastest first, with the stop to walk to, when the bus gets there, where to get off and the
+  total time. Tap a result to follow that bus.
 - **Live positions:** every bus currently reporting is shown on the map, labelled with its
   line, and refreshed every 10 seconds.
 - **Follow a bus:** tap a bus, or type its number, to draw its route in orange and mark its
   stops. Stops already passed turn grey.
 - **Time to the next stops:** the next five stops are listed with the minutes left, and
   labelled on the map.
-- **Pick a stop:** search by stop name or code. The followed bus then shows a large
+- **Highlight a stop:** tap a stop in the list of a followed bus to see a large
   "minutes until this stop" figure.
-- **Line filter:** show only the buses of one line.
+- **Line search:** type a line number to show only that line on the map and list its buses
+  with the direction each is heading. Tap one to follow it.
 
 ## How it works
 
@@ -28,6 +32,9 @@ Nothing is stored and there are no accounts.
 | Live bus positions | Porto's open-data platform (FIWARE broker run by Porto Digital), read directly by the page |
 | Route paths and stop order | Files in `routes/`, copied from STCP's website |
 | Stop names and positions | `stops.json`, copied from STCP's website |
+| Which stops each line serves | `lines.json`, built from the route files |
+| Turning an address into a map position | OpenStreetMap's Nominatim search service |
+| Your position | The phone or browser's own location feature, with your permission |
 | Map images | OpenStreetMap |
 | Map library | Leaflet 1.9.4, loaded from unpkg |
 | Font | Plus Jakarta Sans, loaded from Google Fonts |
@@ -42,6 +49,22 @@ The app finds where the bus is along its route and measures the distance to each
 - **With the helper:** the app asks STCP's arrivals service when this bus is due at a few
   stops along the route and fills in the stops between them by distance.
 
+### How the trip search works
+
+1. The address you type is looked up with Nominatim, limited to the Porto area.
+2. The app takes your position from the browser and finds the stops within 600 m of you and
+   within 600 m of the destination.
+3. For every line it looks for a stop near you that comes before a stop near the destination,
+   choosing the pair with the least walking.
+4. For each such line it picks the nearest live bus that has not yet reached your stop and
+   that you can still reach on foot, then adds up waiting, riding and walking.
+
+Results are sorted by total time. Lines that go there but have no bus on the way are listed
+underneath. If location access is refused, you can move the map and start from its centre.
+
+**Privacy:** the address you type is sent to OpenStreetMap's search service. Your position is
+used only inside the page and is not sent anywhere.
+
 ## Files
 
 | File | Purpose |
@@ -49,8 +72,9 @@ The app finds where the bus is along its route and measures the distance to each
 | `index.html` | The whole app: layout, styling and logic |
 | `stops.json` | All STCP stops as `[code, name, latitude, longitude]` |
 | `routes/<line>_<direction>.json` | One file per line and direction: `c` is the path, `s` is the ordered stops |
+| `lines.json` | The ordered stop codes of every line and direction, used by the trip search |
 | `worker.js` | Optional Cloudflare Worker that relays STCP's arrivals data |
-| `tools/build-data.mjs` | Script that regenerates `stops.json` and `routes/` |
+| `tools/build-data.mjs` | Script that regenerates `stops.json`, `lines.json` and `routes/` |
 
 ## Run it locally
 
@@ -88,7 +112,7 @@ uses STCP's own predictions and can list every bus due at a chosen stop.
 
 ## Refresh the route and stop data
 
-`routes/` and `stops.json` are a snapshot. If STCP changes a line, regenerate them with
+`routes/`, `stops.json` and `lines.json` are a snapshot. If STCP changes a line, regenerate them with
 Node.js 20.11 or newer:
 
 ```bash
@@ -107,11 +131,18 @@ These constants are near the top of the script in `index.html`:
 | `REFRESH_MS` | `10000` | How often bus positions are fetched, in milliseconds |
 | `NEXT_STOPS` | `5` | How many upcoming stops get a time |
 | `DEFAULT_MIN_PER_KM` | `3.5` | Pace used when there is no STCP prediction |
+| `WALK_RADIUS_M` | `600` | How far from you and from the destination a stop may be |
+| `WALK_M_PER_MIN` | `65` | Walking speed, as straight-line metres per minute |
 | `STALE_MS` | `180000` | After this long without a report, a bus is dimmed |
 
 ## Known limits
 
 - **Estimates only:** without the helper, times are based on distance and an average pace.
+- **Direct trips only:** the trip search does not plan journeys that need a change of bus.
+- **Running buses only:** a bus that has not left its first stop yet is not shown, because the
+  app has no timetable.
+- **Trip times are rough:** they use the average pace and straight-line walking distances.
+- **Address search is rate limited:** Nominatim is a shared free service meant for light use.
 - **Data can go stale:** bundled routes and stops reflect the day they were downloaded.
 - **Missing routes:** line ZC has no route data on STCP's site, so following a ZC bus shows an
   error. Circular lines 300 to 303 and tram 22 have one direction only, which is used for both.

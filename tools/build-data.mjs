@@ -1,5 +1,5 @@
 // Downloads every STCP line's path and ordered stops into the small files the app loads:
-// routes/<line>_<direction>.json and stops.json.
+// routes/<line>_<direction>.json, stops.json and lines.json.
 // Run from the project folder with: node tools/build-data.mjs
 // An optional argument sets a different output folder.
 import fs from 'node:fs';
@@ -23,6 +23,8 @@ console.log('Lines found:', lines.length);
 
 let files = 0;
 const skipped = [];
+// Which stops each line serves, in travel order. Used by the address search.
+const lineIndex = {};
 for (const line of lines) {
   for (const dir of [0, 1]) {
     try {
@@ -37,6 +39,7 @@ for (const line of lines) {
       }
       const name = encodeURIComponent(line) + '_' + dir + '.json';
       fs.writeFileSync(path.join(out, 'routes', name), JSON.stringify({ c, s }));
+      lineIndex[encodeURIComponent(line) + '_' + dir] = s.map((row) => row[0]);
       files++;
     } catch (err) {
       skipped.push(line + '_' + dir + ' (' + err.message + ')');
@@ -48,6 +51,7 @@ const stops = (await get('https://stcp.pt/api/stops?limit=5000')).results
   .filter((s) => s.stop_id && s.stop_name && s.stop_name !== '.')
   .map((s) => [s.stop_id, s.stop_name, r5(s.stop_lat), r5(s.stop_lon)]);
 fs.writeFileSync(path.join(out, 'stops.json'), JSON.stringify(stops));
+fs.writeFileSync(path.join(out, 'lines.json'), JSON.stringify(lineIndex));
 
 console.log('Route files written:', files);
 console.log('Stops written:', stops.length);
