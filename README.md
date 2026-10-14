@@ -22,8 +22,14 @@ chosen tab's field is shown, and switching tabs clears the previous search.
   result to follow its bus. Other places that matched the address are offered underneath.
   A card at the top shows the stop nearest to you and the next bus towards the destination;
   the same happens for a place chosen with the Pin tab.
-- **Live positions:** every bus currently reporting is shown on the map, labelled with its
-  line, and refreshed every 10 seconds.
+- **Live positions:** buses are shown on the map, labelled with their line, and refreshed
+  every 10 seconds. To keep the map readable:
+  - the app opens centred on you and shows only the buses of lines that stop within 500 m,
+    with the nearest stop and the next buses near you listed in the panel;
+  - during a search only the relevant buses stay: the lines in a trip's results, the lines at
+    a searched stop, or the line of the bus you follow;
+  - zoomed out with more than 30 buses on the map, buses become small dots without labels.
+  Without your location, all buses are shown.
 - **Follow a bus:** tap a bus, or type its number, to draw its route in orange and mark its
   stops. Stops already passed turn grey.
 - **Time to the next stops:** the next five stops are listed with the minutes left, and

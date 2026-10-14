@@ -236,6 +236,11 @@
     box-shadow: 0 4px 10px rgba(15, 61, 62, 0.3);
   }
   .bus.stale { opacity: 0.4; }
+  .bus-dot {
+    width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%;
+    background: var(--c); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(15, 61, 62, 0.35);
+  }
+  .bus-dot.stale { opacity: 0.4; }
   .bus.tracked { --c: #f7943a !important; }
   .bus.tracked .pill { box-shadow: 0 0 0 5px rgba(247, 148, 58, 0.28), 0 4px 10px rgba(15, 61, 62, 0.3); }
   .stop-pin {
@@ -387,7 +392,8 @@
     };
   }
 
-  const map = L.map('map', { zoomControl: false }).setView([41.155, -8.62], 13);
+  // Central Porto at street level until the user's position is known.
+  const map = L.map('map', { zoomControl: false }).setView([41.1496, -8.6109], 15);
   L.control.zoom({ position: 'topright' }).addTo(map);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -432,6 +438,12 @@
 
   let selectedLine = load('line');
   let lastBuses = [];
+  // Below this zoom, a crowded map shows buses as dots without labels.
+  const DOT_ZOOM = 15;
+  // Stops within this distance of the user count as "near you".
+  const NEAR_RADIUS_M = 500;
+  // Stops and lines near the user once their position is known.
+  let nearMe = null;
   // Which search tab is open: address, pin, stop or bus.
   let mode = '';
   const MODE_HINTS = {
@@ -451,7 +463,15 @@
 
   function busQuery() { return busInput.value.trim().toUpperCase(); }
 
-  function iconFor(bus, stale, tracked) {
+  function iconFor(bus, stale, tracked, compact) {
+    if (compact) {
+      return L.divIcon({
+        className: '',
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
+        html: '<div class="bus-dot' + (stale ? ' stale' : '') + '" style="--c:' + colorFor(bus.line) + '"></div>',
+      });
+    }
     const arrow = bus.heading == null ? '' :
       '<div class="dir" style="transform:rotate(' + Number(bus.heading) + 'deg)"></div>';
     return L.divIcon({
@@ -508,34 +528,57 @@
     marker._slide = requestAnimationFrame(step);
   }
 
+  // The lines that matter right now: the followed bus's line, the lines of a trip or stop
+  // search, or with no search the lines that stop near the user. Null means show everything.
+  function focusLines() {
+    const q = busQuery();
+    const followed = q && lastBuses.find((b) => b.id.toUpperCase() === q);
+    if (followed) return new Set([followed.line]);
+    if (trip && trip.results) {
+      const lines = new Set();
+      trip.results.found.forEach((r) => lines.add(r.option.line));
+      trip.results.changes.forEach((c) => { lines.add(c.lineA); lines.add(c.lineB); });
+      trip.results.idle.forEach((r) => lines.add(r.option.line));
+      return lines.size ? lines : null;
+    }
+    if (trip) return null;
+    if (stopView && stopLines) return new Set(linesAt(stopView.stop.id));
+    if (!pinMode && !selectedLine && nearMe && nearMe.ready && nearMe.lines.size) return nearMe.lines;
+    return null;
+  }
+
   function render(buses) {
     const now = Date.now();
     const seen = new Set();
     const trackedId = busQuery();
     const typedLine = trackedId && buses.some((b) => b.line.toUpperCase() === trackedId) ? trackedId : '';
+    const focus = typedLine ? null : focusLines();
+    const shown = buses.filter((bus) => {
+      // A bus the user follows stays visible whatever the filter.
+      if (bus.id.toUpperCase() === trackedId) return true;
+      if (typedLine) return bus.line.toUpperCase() === typedLine;
+      if (focus) return focus.has(bus.line);
+      return !selectedLine || bus.line === selectedLine;
+    });
+    const compactAll = map.getZoom() < DOT_ZOOM && shown.length > 30;
     let live = 0;
-    for (const bus of buses) {
+    for (const bus of shown) {
       const tracked = bus.id.toUpperCase() === trackedId;
-      // A bus the user searched for stays visible even when another line is filtered.
-      if (typedLine) {
-        if (bus.line.toUpperCase() !== typedLine) continue;
-      } else if (selectedLine && bus.line !== selectedLine && !tracked) {
-        continue;
-      }
+      const compact = compactAll && !tracked;
       const age = bus.time ? now - Date.parse(bus.time) : null;
       const stale = age != null && age > STALE_MS;
       if (!stale) live++;
       seen.add(bus.id);
-      const key = bus.line + '|' + bus.heading + '|' + stale + '|' + tracked;
+      const key = bus.line + '|' + bus.heading + '|' + stale + '|' + tracked + '|' + compact;
       let m = markers.get(bus.id);
       if (!m) {
-        m = L.marker([bus.lat, bus.lon], { icon: iconFor(bus, stale, tracked) }).addTo(map);
+        m = L.marker([bus.lat, bus.lon], { icon: iconFor(bus, stale, tracked, compact) }).addTo(map);
         m.bindPopup('');
         m.on('click', () => trackBus(bus.id));
         markers.set(bus.id, m);
       } else {
         slideTo(m, [bus.lat, bus.lon]);
-        if (m._key !== key) m.setIcon(iconFor(bus, stale, tracked));
+        if (m._key !== key) m.setIcon(iconFor(bus, stale, tracked, compact));
       }
       m._key = key;
       m.setZIndexOffset(tracked ? 2000 : stale ? 0 : 1000);
@@ -776,6 +819,7 @@
       return;
     }
     const rows = view.results = stopBuses(view);
+    render(lastBuses);
     const lines = linesAt(view.stop.id);
     const first = rows[0];
     arrivalsEl.innerHTML = '<div class="headline">' + close + title +
@@ -844,7 +888,7 @@
     if (q) { renderLine(q); return; }
     if (stopView) { renderStop(); return; }
     if (!proxyBase || !selectedStop) {
-      arrivalsEl.innerHTML = '<p class="note">' + escapeHtml(MODE_HINTS[mode] || MODE_HINTS.address) + '</p>';
+      arrivalsEl.innerHTML = nearMeCard() + '<p class="note">' + escapeHtml(MODE_HINTS[mode] || MODE_HINTS.address) + '</p>';
       return;
     }
     if (arrivalsError && !arrivals) {
@@ -1618,6 +1662,7 @@
     }
 
     const results = t.results = tripResults(t);
+    render(lastBuses);
     const first = results.found[0];
     const firstChange = results.changes[0];
     let html;
@@ -1704,7 +1749,10 @@
     startTrip(query);
   });
 
-  map.on('zoomend', () => { if (routeView) updateRoute(); });
+  map.on('zoomend', () => {
+    render(lastBuses);
+    if (routeView) updateRoute();
+  });
 
   // ---- The user's own position: a blue dot that follows them once location is in use ----
 
@@ -1712,6 +1760,57 @@
   let meCircle = null;
   let watchId = null;
   let centreOnFix = false;
+  let centredOnUser = false;
+
+  // Stops within walking distance of the user, the lines that call there, and their routes
+  // so the next buses can be timed. Worked out again after the user moves 150 m.
+  async function updateNearMe(lat, lon) {
+    if (nearMe && metres(nearMe.lat, nearMe.lon, lat, lon) < 150) return;
+    const here = { lat, lon, stops: [], lines: new Set(), routes: new Map(), index: null, ready: false };
+    nearMe = here;
+    try {
+      const [all, index] = await Promise.all([loadStops(), loadStopLines()]);
+      here.index = index;
+      here.stops = all.filter((st) => stopLines.has(st.id))
+        .map((st) => ({ stop: st, m: metres(lat, lon, st.lat, st.lon) }))
+        .filter((r) => r.m <= NEAR_RADIUS_M)
+        .sort((a, b) => a.m - b.m);
+      here.stops.forEach((r) => linesAt(r.stop.id).forEach((line) => here.lines.add(line)));
+      const entries = here.stops.slice(0, 3).flatMap((r) => stopLines.get(r.stop.id) || []);
+      await Promise.all(entries.map((l) =>
+        loadRoute(l.line, l.dir).then((route) => here.routes.set(l.key, route)).catch(() => {})));
+    } catch (err) {
+      // Without stop data the map simply shows every bus.
+    }
+    if (nearMe !== here) return;
+    here.ready = true;
+    render(lastBuses);
+    renderArrivals();
+  }
+
+  // The nearest stop and the next buses at the three nearest stops, for the empty panel.
+  function nearMeCard() {
+    if (!nearMe || !nearMe.ready || !nearMe.stops.length) return '';
+    const first = nearMe.stops[0];
+    const coming = [];
+    for (const r of nearMe.stops.slice(0, 3)) {
+      for (const c of stopBuses({ stop: r.stop, index: nearMe.index, routes: nearMe.routes })) {
+        coming.push(Object.assign({ at: r.stop }, c));
+      }
+    }
+    coming.sort((a, b) => a.minutes - b.minutes);
+    const seenBuses = new Set();
+    const next = coming.filter((c) => !seenBuses.has(c.bus.id) && seenBuses.add(c.bus.id)).slice(0, 4);
+    return '<div class="summary"><div><span class="label">Nearest stop</span><b>' + escapeHtml(first.stop.name) +
+      '</b> · ' + walkMinutes(first.m) + ' min walk<small>Lines ' + escapeHtml(linesAt(first.stop.id).join(', ')) +
+      '</small></div></div>' +
+      (next.length ? '<p class="section">Next buses near you</p>' + next.map((c) =>
+        '<button type="button" class="arrival trip" data-bus="' + escapeHtml(c.bus.id) + '">' +
+        '<span class="tag">' + escapeHtml(c.bus.line) + '</span>' +
+        '<span class="to">' + escapeHtml(c.at.name) + '<small>towards ' + escapeHtml(c.end) + '</small></span>' +
+        '<span class="when"><b>' + (c.minutes <= 0 ? 'now' : '~' + c.minutes + ' min') + '</b></span></button>').join('')
+        : '<p class="note">No bus is on its way to the stops near you right now.</p>');
+  }
 
   function showMe(p) {
     const at = [p.coords.latitude, p.coords.longitude];
@@ -1729,6 +1828,16 @@
       meCircle.setLatLng(at).setRadius(radius);
     }
     locateButton.classList.remove('off');
+    // The first fix centres the map on the user, unless a search already moved it or the
+    // user is far from Porto.
+    if (!centredOnUser) {
+      centredOnUser = true;
+      if (!centreOnFix && !trip && !routeView && !stopView && !pinMode &&
+          metres(at[0], at[1], 41.1579, -8.6291) < 40000) {
+        map.fitBounds([at, at], Object.assign(viewPadding(), { maxZoom: 16 }));
+      }
+    }
+    updateNearMe(at[0], at[1]);
     if (centreOnFix) {
       centreOnFix = false;
       map.fitBounds([at, at], Object.assign(viewPadding(), { maxZoom: Math.max(map.getZoom(), 16) }));
@@ -1832,6 +1941,7 @@
   arrivalsEl.addEventListener('click', (e) => {
     if (e.target.closest('[data-clear-stop]')) {
       closeStop();
+      render(lastBuses);
       renderArrivals();
       return;
     }
@@ -1857,6 +1967,7 @@
       customOrigin = null;
       clearTrip();
       closeStop();
+      render(lastBuses);
       destInput.value = '';
       renderArrivals();
       return;
