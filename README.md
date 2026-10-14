@@ -20,6 +20,8 @@ chosen tab's field is shown, and switching tabs clears the previous search.
   with one change when they are faster or when no direct bus exists. Each result shows the stop
   to walk to, when the bus gets there, where to change or get off, and the total time. Tap a
   result to follow its bus. Other places that matched the address are offered underneath.
+  A card at the top shows the stop nearest to you and the next bus towards the destination;
+  the same happens for a place chosen with the Pin tab.
 - **Live positions:** every bus currently reporting is shown on the map, labelled with its
   line, and refreshed every 10 seconds.
 - **Follow a bus:** tap a bus, or type its number, to draw its route in orange and mark its
