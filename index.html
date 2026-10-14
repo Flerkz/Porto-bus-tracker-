@@ -85,7 +85,7 @@
   #stopList li:last-child button { border-bottom: 0; }
   #stopList small { display: block; margin-top: 1px; color: var(--muted); font-weight: 500; }
   #tripForm button {
-    flex: none; height: 46px; padding: 0 20px; border: 0; border-radius: 16px;
+    flex: none; height: 46px; padding: 0 16px; border: 0; border-radius: 16px;
     font-size: 15px; font-weight: 700; color: #fff; background: var(--orange);
     box-shadow: 0 4px 12px rgba(247, 148, 58, 0.35);
   }
@@ -126,6 +126,25 @@
   .arrival .when b { font-size: 15px; font-weight: 700; }
   .arrival .when small { color: var(--muted); display: block; font-weight: 500; }
   .arrival .go { color: var(--orange); font-weight: 700; font-size: 20px; }
+
+  #tripForm #pinButton {
+    width: 46px; padding: 0; display: grid; place-items: center;
+    color: #b45f12; background: var(--orange-soft); box-shadow: none;
+  }
+  #tripForm #pinButton[aria-pressed="true"] { color: #fff; background: var(--ink); }
+  /* The pin stays put over the middle of the visible map while the map moves under it.
+     Its zero-size box marks the exact spot the pin points at. */
+  #centrePin {
+    position: fixed; z-index: 900; width: 0; height: 0; pointer-events: none;
+    left: 50%; top: calc((100% - var(--sheet-h)) / 2 + 36px);
+  }
+  #centrePin[hidden] { display: none; }
+  #centrePin .dest-pin { position: absolute; left: -15px; top: -36px; width: 30px; height: 30px; }
+  #centrePin::after {
+    content: ""; position: absolute; left: -6px; top: -3px; width: 12px; height: 6px;
+    border-radius: 50%; background: rgba(15, 61, 62, 0.35);
+  }
+  .soft-button.primary { color: #fff; background: var(--orange); box-shadow: 0 4px 12px rgba(247, 148, 58, 0.35); }
 
   /* Trip results: two lines of text per card. */
   .trip .to { white-space: normal; }
@@ -216,6 +235,7 @@
     header { right: auto; width: 390px; box-sizing: border-box; }
     #panel { left: 12px; right: auto; bottom: 12px; width: 390px; max-height: 64vh; border-radius: 28px; box-shadow: var(--shadow); }
     .leaflet-bottom { bottom: 0; }
+    #centrePin { top: 50%; left: calc(50% + 200px); }
   }
 </style>
 </head>
@@ -226,11 +246,15 @@
   <select id="line" aria-label="Filter by line"><option value="">All lines</option></select>
   <button id="panelToggle" type="button" aria-expanded="false" aria-controls="panel">Search</button>
 </header>
+<div id="centrePin" hidden><div class="dest-pin"></div></div>
 <div id="status"><span id="count">Loading…</span><span id="updated"></span></div>
 <section id="panel" hidden>
   <form id="tripForm">
     <input id="destInput" type="search" placeholder="Where to? Type an address" autocomplete="off" enterkeyhint="search" aria-label="Destination address">
     <button type="submit">Go</button>
+    <button type="button" id="pinButton" aria-pressed="false" aria-label="Pick a place on the map" title="Pick a place on the map">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>
+    </button>
   </form>
   <div class="row">
     <input id="stopInput" type="search" placeholder="Stop name" autocomplete="off" aria-label="Stop name or code">
@@ -321,6 +345,7 @@
   const stopList = document.getElementById('stopList');
   const tripForm = document.getElementById('tripForm');
   const destInput = document.getElementById('destInput');
+  const pinButton = document.getElementById('pinButton');
 
   function load(key) { try { return localStorage.getItem(key) || ''; } catch (e) { return ''; } }
   function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
@@ -697,13 +722,25 @@
     const q = busQuery();
     const bus = q && lastBuses.find((b) => b.id.toUpperCase() === q);
     if (bus) { renderRoute(bus); return; }
+    if (pinMode) {
+      arrivalsEl.innerHTML = '<p class="note">Move the map until the pin sits on the place you want to go.</p>' +
+        '<button type="button" class="soft-button primary" data-pin="to">Find buses to this place</button>' +
+        '<button type="button" class="soft-button" data-pin="from">Start from here instead</button>';
+      return;
+    }
     if (trip) { renderTrip(); return; }
 
     if (q) { renderLine(q); return; }
     if (stopView) { renderStop(); return; }
+    if (customOrigin) {
+      arrivalsEl.innerHTML = '<p class="note">Starting point pinned. Now type an address above, ' +
+        'or use the pin button to choose the destination on the map.</p>' +
+        '<button type="button" class="soft-button" data-clear-origin>Use my location instead</button>';
+      return;
+    }
     if (!proxyBase || !selectedStop) {
       arrivalsEl.innerHTML = '<p class="note">Type an address to find the fastest bus from where you are, ' +
-        'search for a stop or a line, or tap a bus on the map.</p>';
+        'search for a stop or a line, or tap a bus on the map. The pin button lets you pick a place on the map.</p>';
       return;
     }
     if (arrivalsError && !arrivals) {
@@ -1035,6 +1072,9 @@
   const tripLayer = L.layerGroup().addTo(map);
   let trip = null;
   let lineIndex = null;
+  // A starting point the user pinned by hand; used instead of the device's location.
+  let customOrigin = null;
+  let pinMode = false;
 
   function metres(aLat, aLon, bLat, bLon) {
     const a = toXY(aLat, aLon);
@@ -1068,22 +1108,57 @@
     });
   }
 
+  function originMarker(o) {
+    return L.marker([o.lat, o.lon], {
+      icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="me-dot"></div>' }),
+      zIndexOffset: 2500,
+    }).bindPopup('Your starting point');
+  }
+
   function clearTrip() {
     trip = null;
     tripLayer.clearLayers();
+    if (customOrigin) originMarker(customOrigin).addTo(tripLayer);
   }
 
-  async function startTrip(query) {
+  function beginTrip(query) {
     clearTrip();
     closeStop();
     const t = trip = {
-      status: 'searching', query, message: '', places: [], dest: null, origin: null,
+      status: 'searching', query, message: '', places: [], dest: null,
+      origin: customOrigin, originPinned: Boolean(customOrigin),
       index: null, options: [], routes: new Map(), results: null,
     };
     busInput.value = '';
     save('bus', '');
     render(lastBuses);
     syncRoute();
+    return t;
+  }
+
+  // A trip to a point picked on the map, with no address lookup.
+  function startTripTo(point) {
+    destInput.value = '';
+    const t = beginTrip('the pinned place');
+    t.places = [{ lat: point.lat, lon: point.lon, label: 'the pinned place', detail: '' }];
+    chooseDestination(t, 0);
+  }
+
+  function setOrigin(point) {
+    customOrigin = { lat: point.lat, lon: point.lon };
+    if (trip && trip.dest) {
+      trip.origin = customOrigin;
+      trip.originPinned = true;
+      planTrip(trip);
+    } else {
+      tripLayer.clearLayers();
+      originMarker(customOrigin).addTo(tripLayer);
+      renderArrivals();
+    }
+  }
+
+  async function startTrip(query) {
+    const t = beginTrip(query);
     try {
       // The typed address goes to OpenStreetMap's search service. The user's location does not.
       const places = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5' +
@@ -1198,10 +1273,7 @@
     const points = [];
     if (t.origin) {
       points.push([t.origin.lat, t.origin.lon]);
-      L.marker(points[0], {
-        icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="me-dot"></div>' }),
-        zIndexOffset: 2500,
-      }).bindPopup('Your starting point').addTo(tripLayer);
+      originMarker(t.origin).addTo(tripLayer);
     }
     if (t.dest) {
       points.push([t.dest.lat, t.dest.lon]);
@@ -1263,7 +1335,7 @@
   function tripHeadline(t, big, small) {
     return '<div class="headline">' +
       '<button type="button" class="close" data-clear-trip aria-label="Close this search">✕</button>' +
-      'To ' + escapeHtml(t.dest ? t.dest.label : t.query) +
+      'To ' + escapeHtml(t.dest ? t.dest.label : t.query) + (t.originPinned ? ', from your pin' : '') +
       (big ? '<b>' + escapeHtml(big) + '</b>' : '') + escapeHtml(small || '') + '</div>';
   }
 
@@ -1316,6 +1388,28 @@
     arrivalsEl.innerHTML = html;
   }
 
+  // ---- Pin: a marker fixed mid-screen; the user slides the map under it, then confirms ----
+
+  const centrePin = document.getElementById('centrePin');
+
+  function setPinMode(on) {
+    pinMode = on;
+    pinButton.setAttribute('aria-pressed', String(on));
+    centrePin.hidden = !on;
+    if (on && panel.hidden) setPanel(true);
+    renderArrivals();
+  }
+
+  // The map position under the tip of the fixed pin.
+  function pinTarget() {
+    const tip = centrePin.getBoundingClientRect();
+    const frame = map.getContainer().getBoundingClientRect();
+    const at = map.containerPointToLatLng([tip.left - frame.left, tip.top - frame.top]);
+    return { lat: at.lat, lon: at.lng };
+  }
+
+  pinButton.addEventListener('click', () => setPinMode(!pinMode));
+
   tripForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const query = destInput.value.trim();
@@ -1367,7 +1461,22 @@
       renderArrivals();
       return;
     }
+    const pinAction = e.target.closest('[data-pin]');
+    if (pinAction && pinMode) {
+      const point = pinTarget();
+      setPinMode(false);
+      if (pinAction.dataset.pin === 'to') startTripTo(point);
+      else setOrigin(point);
+      return;
+    }
+    if (e.target.closest('[data-clear-origin]')) {
+      customOrigin = null;
+      tripLayer.clearLayers();
+      renderArrivals();
+      return;
+    }
     if (e.target.closest('[data-clear-trip]')) {
+      customOrigin = null;
       clearTrip();
       destInput.value = '';
       renderArrivals();
