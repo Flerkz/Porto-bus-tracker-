@@ -151,6 +151,16 @@
   }
   .soft-button.primary { color: #fff; background: var(--orange); box-shadow: 0 4px 12px rgba(247, 148, 58, 0.35); }
 
+  .summary {
+    display: grid; gap: 10px; padding: 12px 14px; margin-bottom: 12px;
+    border: 1px solid var(--line); border-radius: 18px; background: var(--surface);
+  }
+  .summary .label {
+    display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .summary b { font-size: 15px; color: var(--ink); }
+  .summary small { display: block; margin-top: 1px; color: var(--muted); }
   .section {
     margin: 14px 4px 8px; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
     text-transform: uppercase; color: var(--muted);
@@ -380,7 +390,7 @@
   // Which search tab is open: address, pin, stop or bus.
   let mode = '';
   const MODE_HINTS = {
-    address: 'Type an address and tap Go to see the fastest buses from where you are.',
+    address: 'Type an address and press Enter or the arrow to see the nearest stop and the fastest buses from where you are.',
     pin: '',
     stop: 'Start typing a stop name and pick it from the suggestions.',
     bus: 'Type a line, such as 205, or a bus number. You can also tap a bus on the map.',
@@ -1312,6 +1322,16 @@
         return loadRoute(line, dir).then((route) => t.routes.set(key, route)).catch(() => {});
       }));
       if (trip !== t) return;
+      // The stop nearest to the starting point, among stops a line actually calls at.
+      await loadStopLines();
+      if (trip !== t) return;
+      t.nearest = null;
+      for (const st of all) {
+        if (!stopLines.has(st.id)) continue;
+        const m = metres(t.origin.lat, t.origin.lon, st.lat, st.lon);
+        if (!t.nearest || m < t.nearest.m) t.nearest = { stop: st, m };
+      }
+      if (t.nearest) selectStop(t.nearest.stop, false);
       t.status = 'ready';
       drawTrip(t);
       renderArrivals();
@@ -1518,6 +1538,27 @@
       (big ? '<b>' + escapeHtml(big) + '</b>' : '') + escapeHtml(small || '') + '</div>';
   }
 
+  // The nearest stop to the starting point, and the soonest bus among the ways to get there.
+  function tripSummary(t, results) {
+    const rows = [];
+    if (t.nearest) {
+      rows.push('<div><span class="label">Nearest stop</span><b>' + escapeHtml(t.nearest.stop.name) + '</b> · ' +
+        walkMinutes(t.nearest.m) + ' min walk<small>Lines ' + escapeHtml(linesAt(t.nearest.stop.id).join(', ')) + '</small></div>');
+    }
+    const firstLegs = results.found.map((r) => ({ line: r.option.line, wait: r.wait, gap: r.gap, estimated: r.estimated, stop: r.boardStop }))
+      .concat(results.changes.map((c) => ({ line: c.lineA, wait: c.wait, gap: c.gapA, estimated: c.firstEstimated, stop: c.board })));
+    const live = firstLegs.filter((l) => !l.estimated).sort((a, b) => a.wait - b.wait)[0];
+    const guess = firstLegs.filter((l) => l.estimated).sort((a, b) => a.gap - b.gap)[0];
+    if (live) {
+      rows.push('<div><span class="label">Next bus towards your destination</span><b>Line ' + escapeHtml(live.line) + ' ' +
+        (live.wait <= 0 ? 'arriving now' : 'in ~' + live.wait + ' min') + '</b><small>at ' + escapeHtml(live.stop.name) + '</small></div>');
+    } else if (guess) {
+      rows.push('<div><span class="label">Next bus towards your destination</span><b>Line ' + escapeHtml(guess.line) +
+        ', about every ' + guess.gap + ' min</b><small>at ' + escapeHtml(guess.stop.name) + '</small></div>');
+    }
+    return rows.length ? '<div class="summary">' + rows.join('') + '</div>' : '';
+  }
+
   function renderTrip() {
     const t = trip;
     if (t.status === 'searching') { arrivalsEl.innerHTML = tripHeadline(t) + '<p class="note">Looking up the address…</p>'; return; }
@@ -1543,6 +1584,7 @@
     } else {
       html = tripHeadline(t, '', '');
     }
+    html += tripSummary(t, results);
     if (!first && !firstChange) {
       html += '<p class="note">' + (t.options.length || (t.transfers || []).length
         ? 'Buses go there, but none is on its way to your stop right now.'
@@ -1769,6 +1811,7 @@
     if (e.target.closest('[data-clear-trip]')) {
       customOrigin = null;
       clearTrip();
+      closeStop();
       destInput.value = '';
       renderArrivals();
       return;
