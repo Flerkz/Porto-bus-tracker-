@@ -17,9 +17,10 @@ It is a single static web page with no backend, so it can be hosted for free on 
   stops. Stops already passed turn grey.
 - **Time to the next stops:** the next five stops are listed with the minutes left, and
   labelled on the map.
-- **Pick a stop:** search by stop name or code. The followed bus then shows a large
+- **Highlight a stop:** tap a stop in the list of a followed bus to see a large
   "minutes until this stop" figure.
-- **Line filter:** show only the buses of one line.
+- **Line search:** type a line number to show only that line on the map and list its buses
+  with the direction each is heading. Tap one to follow it.
 
 ## How it works
 
