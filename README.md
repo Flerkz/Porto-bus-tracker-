@@ -42,6 +42,8 @@ chosen tab's field is shown, and switching tabs clears the previous search.
 - **Stop search:** start typing a stop name or code and pick from the suggestions, which show
   each stop's code and lines. The app then lists the buses on their way to that stop, soonest
   first.
+- **Line picker:** the button in the top bar lists every line running now with how many of
+  its buses are live. Choosing one shows only that line and zooms to its buses.
 - **Line search:** type a line number to show only that line on the map and list its buses
   with the direction each is heading. Tap one to follow it.
 

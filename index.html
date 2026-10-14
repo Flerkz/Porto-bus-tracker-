@@ -39,7 +39,32 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   select, header button { font-size: 14px; font-weight: 600; height: 38px; padding: 0 14px; border-radius: 19px; }
-  select { max-width: 32vw; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+  header #lineButton {
+    display: flex; align-items: center; gap: 4px; max-width: 42vw; padding-right: 8px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink); box-shadow: none;
+  }
+  header #lineButton span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  header #lineButton[aria-expanded="true"] { background: var(--field); color: var(--ink); }
+  #linePicker {
+    position: fixed; z-index: 1100; left: 12px; right: 12px; max-height: 55vh; overflow-y: auto;
+    padding: 12px; box-sizing: border-box; border-radius: 20px; background: var(--surface); box-shadow: var(--shadow);
+  }
+  #linePicker[hidden] { display: none; }
+  .picker-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin: 0 2px 10px; font-size: 14px; color: var(--ink);
+  }
+  .picker-head span { font-size: 12px; color: var(--muted); }
+  .chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap: 6px; }
+  .line-chip {
+    display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 7px 4px;
+    border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink);
+  }
+  .line-chip b { font-size: 15px; }
+  .line-chip small { font-size: 11px; color: var(--muted); }
+  .line-chip.on { border-color: var(--teal); background: var(--teal); color: #fff; }
+  .line-chip.on small { color: rgba(255, 255, 255, 0.8); }
+  .line-chip.all { width: 100%; flex-direction: row; justify-content: space-between; padding: 9px 12px; margin-bottom: 8px; }
   header button { border: 0; background: var(--orange); color: #fff; box-shadow: 0 4px 12px rgba(247, 148, 58, 0.35); }
   header button[aria-expanded="true"] { background: var(--orange-soft); color: #b45f12; box-shadow: none; }
 
@@ -319,6 +344,7 @@
     #panel { left: 12px; right: auto; bottom: 12px; width: 390px; max-height: 64vh; border-radius: 28px; box-shadow: var(--shadow); }
     .leaflet-bottom { bottom: 0; }
     #centrePin { top: 50%; left: calc(50% + 200px); }
+    #linePicker { right: auto; width: 390px; }
   }
 </style>
 </head>
@@ -326,9 +352,13 @@
 <div id="map"></div>
 <header>
   <h1>Porto buses</h1>
-  <select id="line" aria-label="Filter by line"><option value="">All lines</option></select>
+  <button type="button" id="lineButton" aria-haspopup="dialog" aria-expanded="false" aria-controls="linePicker">
+    <span>All lines</span>
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7 10l5 5 5-5z"/></svg>
+  </button>
   <button id="panelToggle" type="button" aria-expanded="false" aria-controls="panel">Search</button>
 </header>
+<div id="linePicker" role="dialog" aria-label="Choose a line" hidden></div>
 <div id="centrePin" hidden><div class="dest-pin"></div></div>
 <div id="status"><span id="count">Loading…</span><span id="updated"></span></div>
 <section id="panel" hidden>
@@ -420,7 +450,10 @@
   }
 
   const markers = new Map();
-  const lineSelect = document.getElementById('line');
+  const lineButton = document.getElementById('lineButton');
+  const linePicker = document.getElementById('linePicker');
+  // Buses reporting on each line right now.
+  let lineCounts = new Map();
   const statusEl = document.getElementById('status');
   const countEl = document.getElementById('count');
   const updatedEl = document.getElementById('updated');
@@ -498,15 +531,46 @@
   }
 
   function updateLineOptions(buses) {
-    const lines = [...new Set(buses.map((b) => b.line))]
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    const wanted = [''].concat(lines);
-    const current = [...lineSelect.options].map((o) => o.value);
-    if (wanted.join('|') === current.join('|')) return;
-    lineSelect.innerHTML = '<option value="">All lines</option>' +
-      lines.map((l) => '<option value="' + escapeHtml(l) + '">Line ' + escapeHtml(l) + '</option>').join('');
-    lineSelect.value = lines.includes(selectedLine) ? selectedLine : '';
-    selectedLine = lineSelect.value;
+    const now = Date.now();
+    lineCounts = new Map();
+    for (const b of buses) {
+      if (b.time && now - Date.parse(b.time) > STALE_MS) continue;
+      lineCounts.set(b.line, (lineCounts.get(b.line) || 0) + 1);
+    }
+    // A saved line that has no buses running any more falls back to all lines.
+    if (selectedLine && !buses.some((b) => b.line === selectedLine)) {
+      selectedLine = '';
+      save('line', '');
+    }
+    updateLineButton();
+    if (!linePicker.hidden) renderLinePicker();
+  }
+
+  function updateLineButton() {
+    lineButton.querySelector('span').textContent = selectedLine
+      ? 'Line ' + selectedLine + ' · ' + (lineCounts.get(selectedLine) || 0) + ' live'
+      : 'All lines';
+  }
+
+  function renderLinePicker() {
+    const lines = [...lineCounts.keys()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const total = [...lineCounts.values()].reduce((sum, n) => sum + n, 0);
+    linePicker.innerHTML =
+      '<div class="picker-head"><b>Lines running now</b><span>' + total + ' buses live</span></div>' +
+      '<button type="button" class="line-chip all' + (selectedLine ? '' : ' on') + '" data-line="">' +
+      '<b>All lines</b><small>' + lines.length + ' lines</small></button>' +
+      '<div class="chips">' + lines.map((l) =>
+        '<button type="button" class="line-chip' + (l === selectedLine ? ' on' : '') + '" data-line="' + escapeHtml(l) + '">' +
+        '<b>' + escapeHtml(l) + '</b><small>' + lineCounts.get(l) + ' live</small></button>').join('') + '</div>';
+  }
+
+  function setLinePicker(open) {
+    linePicker.hidden = !open;
+    lineButton.setAttribute('aria-expanded', String(open));
+    if (open) {
+      linePicker.style.top = (document.querySelector('header').getBoundingClientRect().bottom + 6) + 'px';
+      renderLinePicker();
+    }
   }
 
   // Glides a marker to its new position over a second. The position goes through Leaflet on
@@ -2012,11 +2076,24 @@
     if (stop) selectStop(stop, false);
   });
 
-  lineSelect.addEventListener('change', () => {
-    selectedLine = lineSelect.value;
+  lineButton.addEventListener('click', () => setLinePicker(linePicker.hidden));
+  linePicker.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-line]');
+    if (!chip) return;
+    selectedLine = chip.dataset.line;
     save('line', selectedLine);
+    updateLineButton();
+    setLinePicker(false);
     render(lastBuses);
+    // Bring the chosen line's buses into view.
+    const onLine = lastBuses.filter((b) => b.line === selectedLine);
+    if (onLine.length) map.fitBounds(onLine.map((b) => [b.lat, b.lon]), Object.assign(viewPadding(30), { maxZoom: 15 }));
   });
+  // Close the picker on a click elsewhere or on Escape.
+  document.addEventListener('click', (e) => {
+    if (!linePicker.hidden && !linePicker.contains(e.target) && !lineButton.contains(e.target)) setLinePicker(false);
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !linePicker.hidden) setLinePicker(false); });
 
   const savedBus = load('bus');
   const savedMode = load('mode');
