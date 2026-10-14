@@ -1503,12 +1503,8 @@
   const LocateControl = L.Control.extend({ onAdd: () => locateButton });
   new LocateControl({ position: 'topright' }).addTo(map);
 
-  // Start the dot straight away when the user already allowed location for this site.
-  if (navigator.permissions && navigator.geolocation) {
-    navigator.permissions.query({ name: 'geolocation' })
-      .then((state) => { if (state.state === 'granted') watchMe(); })
-      .catch(() => {});
-  }
+  // Show the dot from the start; the browser asks for permission the first time.
+  watchMe();
 
   // Each tab starts fresh, so results from different searches never show at the same time.
   function setMode(next) {

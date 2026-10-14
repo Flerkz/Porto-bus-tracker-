@@ -11,7 +11,8 @@ It is a single static web page with no backend, so it can be hosted for free on 
 The search panel has four tabs: **Address**, **Pin**, **Stop** and **Bus / line**. Only the
 chosen tab's field is shown, and switching tabs clears the previous search.
 
-- **Your location:** once location is in use, a blue dot shows where you are and follows you.
+- **Your location:** a blue dot shows where you are from the moment the app opens and follows
+  you. The browser asks for permission the first time.
   The location button on the map centres it.
 
 - **Trip search:** type an address and the app finds the direct buses from where you are,
