@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#12355b">
+<title>Porto buses live</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  body { display: flex; flex-direction: column; background: #12355b; }
+  header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; padding-top: calc(8px + env(safe-area-inset-top));
+    color: #fff; background: #12355b;
+  }
+  header h1 { font-size: 16px; margin: 0; flex: 1; white-space: nowrap; }
+  select, header button {
+    font-size: 16px; padding: 6px 8px; border-radius: 8px; border: 0;
+    background: #fff; color: #12355b;
+  }
+  select { max-width: 34vw; }
+  header button[aria-expanded="true"] { background: #ffd23f; }
+
+  #panel { background: #f3f6fa; padding: 10px 12px; display: grid; gap: 8px; }
+  #panel[hidden] { display: none; }
+  #panel input {
+    width: 100%; box-sizing: border-box; font-size: 16px; padding: 9px 10px;
+    border: 1px solid #b8c4d2; border-radius: 8px; background: #fff; color: #111;
+  }
+  #stopList { list-style: none; margin: 4px 0 0; padding: 0; }
+  #stopList button {
+    width: 100%; text-align: left; font-size: 15px; padding: 9px 10px;
+    border: 0; border-bottom: 1px solid #dde4ec; background: #fff; color: #111;
+  }
+  #stopList small { color: #5b6b7c; margin-left: 6px; }
+  #arrivals { max-height: 30vh; overflow-y: auto; font-size: 14px; color: #1c2733; }
+  #arrivals:empty { display: none; }
+  .headline {
+    background: #12355b; color: #fff; border-radius: 10px; padding: 10px 12px;
+    margin-bottom: 8px; font-size: 15px;
+  }
+  .headline b { font-size: 26px; display: block; }
+  .note { margin: 0 0 8px; color: #44515f; }
+  .arrival {
+    display: flex; align-items: center; gap: 10px;
+    padding: 7px 0; border-bottom: 1px solid #dde4ec;
+  }
+  .arrival .tag {
+    min-width: 40px; text-align: center; font-weight: 700; color: #fff;
+    border-radius: 6px; padding: 3px 4px; background: var(--c);
+  }
+  .arrival .to { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .arrival .when { text-align: right; white-space: nowrap; }
+  .arrival .when b { font-size: 16px; }
+  .arrival .when small { color: #5b6b7c; display: block; }
+  button.arrival {
+    width: 100%; border: 0; border-bottom: 1px solid #dde4ec; background: none;
+    font: inherit; color: inherit; text-align: left;
+  }
+  .arrival .dot {
+    width: 12px; height: 12px; box-sizing: border-box; flex: none;
+    border-radius: 50%; border: 3px solid var(--c); background: #fff;
+  }
+  .arrival.chosen { background: #fff3c4; }
+  .arrival .go { color: #12355b; font-weight: 700; }
+  .fine { margin: 8px 0 0; font-size: 12px; color: #5b6b7c; }
+
+  #map { flex: 1; min-height: 0; }
+  #status {
+    padding: 6px 12px; padding-bottom: calc(6px + env(safe-area-inset-bottom));
+    font-size: 13px; color: #dbe7f3; background: #12355b;
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  #status.error { background: #8a1c1c; color: #fff; }
+
+  .bus { position: relative; width: 40px; height: 40px; }
+  .bus .dir {
+    position: absolute; inset: 0; display: flex; justify-content: center;
+    transition: transform 0.5s;
+  }
+  .bus .dir::before {
+    content: ""; width: 0; height: 0;
+    border-left: 6px solid transparent; border-right: 6px solid transparent;
+    border-bottom: 9px solid var(--c);
+  }
+  .bus .pill {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    min-width: 22px; height: 22px; padding: 0 4px; box-sizing: border-box;
+    border-radius: 11px; border: 2px solid #fff; background: var(--c); color: #fff;
+    font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  }
+  .bus.stale { opacity: 0.4; }
+  .bus.tracked .pill { border-color: #ffd23f; box-shadow: 0 0 0 4px rgba(255, 210, 63, 0.7), 0 1px 4px rgba(0, 0, 0, 0.45); }
+  .stop-pin {
+    width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%;
+    background: #fff; border: 5px solid #d62828; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  }
+  .stop-label {
+    padding: 1px 6px; border-radius: 6px; border: 1px solid #12355b;
+    font-size: 11px; line-height: 1.35; color: #1c2733; white-space: nowrap;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  .stop-label span {
+    display: inline-block; max-width: 120px; overflow: hidden;
+    text-overflow: ellipsis; vertical-align: bottom;
+  }
+  .stop-label b { margin-left: 5px; color: #12355b; }
+  .leaflet-marker-icon { transition: transform 1s linear; }
+  .leaflet-zoom-anim .leaflet-marker-icon { transition: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Porto buses</h1>
+  <select id="line" aria-label="Filter by line"><option value="">All lines</option></select>
+  <button id="panelToggle" type="button" aria-expanded="false" aria-controls="panel">Arrivals</button>
+</header>
+<section id="panel" hidden>
+  <div>
+    <input id="stopInput" type="search" placeholder="Stop name or code" autocomplete="off" aria-label="Stop name or code">
+    <ul id="stopList"></ul>
+  </div>
+  <input id="busInput" type="search" placeholder="Bus number or line, or tap a bus on the map" autocomplete="off" aria-label="Bus or line number">
+  <div id="arrivals"></div>
+</section>
+<div id="map"></div>
+<div id="status"><span id="count">Loading…</span><span id="updated"></span></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  // Optional: address of the helper from worker.js, e.g. 'https://porto-buses.yourname.workers.dev'.
+  // Without it the map, routes and stops all work, with times estimated from distance.
+  // With it the app also uses STCP's live predictions and lists the buses due at a stop.
+  const STCP_PROXY = 'PASTE-YOUR-WORKER-URL-HERE';
+
+  const FEED_URL =
+    'https://broker.fiware.urbanplatform.portodigital.pt/v2/entities' +
+    '?q=vehicleType==bus&limit=1000&options=keyValues';
+  const REFRESH_MS = 10000;
+  const ARRIVALS_REFRESH_MS = 20000;
+  const ROUTE_REFRESH_MS = 30000;
+  const STALE_MS = 3 * 60 * 1000;
+  // Used only when STCP has no prediction for a bus: a typical city bus pace.
+  const DEFAULT_MIN_PER_KM = 3.5;
+
+  const proxyBase = /^https?:\/\//.test(STCP_PROXY) ? STCP_PROXY.replace(/\/+$/, '') : null;
+
+  function annotation(list, prefix) {
+    const hit = (list || []).find((a) => typeof a === 'string' && a.startsWith(prefix));
+    return hit ? hit.slice(prefix.length) : null;
+  }
+
+  function simplify(entity) {
+    const coords = entity.location && entity.location.coordinates;
+    if (!coords) return null;
+    return {
+      id: String(entity.fleetVehicleId || entity.id),
+      line: annotation(entity.annotations, 'stcp:route:') || '?',
+      trip: annotation(entity.annotations, 'stcp:nr_viagem:'),
+      dir: annotation(entity.annotations, 'stcp:sentido:'),
+      lat: coords[1],
+      lon: coords[0],
+      heading: entity.heading ?? entity.bearing ?? null,
+      speed: entity.speed ?? null,
+      time: entity.observationDateTime || null,
+    };
+  }
+
+  const map = L.map('map', { zoomControl: false }).setView([41.155, -8.62], 13);
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors | Bus data: STCP / Porto Digital',
+  }).addTo(map);
+
+  // The arrivals panel grows and shrinks, which changes the map's height.
+  new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+
+  const markers = new Map();
+  const lineSelect = document.getElementById('line');
+  const statusEl = document.getElementById('status');
+  const countEl = document.getElementById('count');
+  const updatedEl = document.getElementById('updated');
+  const panel = document.getElementById('panel');
+  const panelToggle = document.getElementById('panelToggle');
+  const stopInput = document.getElementById('stopInput');
+  const stopList = document.getElementById('stopList');
+  const busInput = document.getElementById('busInput');
+  const arrivalsEl = document.getElementById('arrivals');
+
+  function load(key) { try { return localStorage.getItem(key) || ''; } catch (e) { return ''; } }
+  function save(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+
+  let selectedLine = load('line');
+  let lastBuses = [];
+
+  function colorFor(line) {
+    let h = 0;
+    for (const ch of line) h = (h * 31 + ch.charCodeAt(0)) % 360;
+    return 'hsl(' + h + ', 65%, 38%)';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => '&#' + c.charCodeAt(0) + ';');
+  }
+
+  function busQuery() { return busInput.value.trim().toUpperCase(); }
+
+  function iconFor(bus, stale, tracked) {
+    const arrow = bus.heading == null ? '' :
+      '<div class="dir" style="transform:rotate(' + Number(bus.heading) + 'deg)"></div>';
+    return L.divIcon({
+      className: '',
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+      html: '<div class="bus' + (stale ? ' stale' : '') + (tracked ? ' tracked' : '') +
+        '" style="--c:' + colorFor(bus.line) + '">' +
+        arrow + '<div class="pill">' + escapeHtml(bus.line) + '</div></div>',
+    });
+  }
+
+  function ageText(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + ' s ago';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    return Math.round(s / 3600) + ' h ago';
+  }
+
+  function popupFor(bus, age) {
+    return '<b>Line ' + escapeHtml(bus.line) + '</b><br>Bus ' + escapeHtml(bus.id) +
+      (bus.speed != null ? '<br>Speed: ' + Math.round(bus.speed) + ' km/h' : '') +
+      (age != null ? '<br>Position from ' + ageText(age) : '');
+  }
+
+  function updateLineOptions(buses) {
+    const lines = [...new Set(buses.map((b) => b.line))]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    const wanted = [''].concat(lines);
+    const current = [...lineSelect.options].map((o) => o.value);
+    if (wanted.join('|') === current.join('|')) return;
+    lineSelect.innerHTML = '<option value="">All lines</option>' +
+      lines.map((l) => '<option value="' + escapeHtml(l) + '">Line ' + escapeHtml(l) + '</option>').join('');
+    lineSelect.value = lines.includes(selectedLine) ? selectedLine : '';
+    selectedLine = lineSelect.value;
+  }
+
+  function render(buses) {
+    const now = Date.now();
+    const seen = new Set();
+    const trackedId = busQuery();
+    let live = 0;
+    for (const bus of buses) {
+      const tracked = bus.id.toUpperCase() === trackedId;
+      // A bus the user searched for stays visible even when another line is filtered.
+      if (selectedLine && bus.line !== selectedLine && !tracked) continue;
+      const age = bus.time ? now - Date.parse(bus.time) : null;
+      const stale = age != null && age > STALE_MS;
+      if (!stale) live++;
+      seen.add(bus.id);
+      const key = bus.line + '|' + bus.heading + '|' + stale + '|' + tracked;
+      let m = markers.get(bus.id);
+      if (!m) {
+        m = L.marker([bus.lat, bus.lon], { icon: iconFor(bus, stale, tracked) }).addTo(map);
+        m.bindPopup('');
+        m.on('click', () => trackBus(bus.id));
+        markers.set(bus.id, m);
+      } else {
+        m.setLatLng([bus.lat, bus.lon]);
+        if (m._key !== key) m.setIcon(iconFor(bus, stale, tracked));
+      }
+      m._key = key;
+      m.setZIndexOffset(tracked ? 2000 : stale ? 0 : 1000);
+      m.setPopupContent(popupFor(bus, age));
+    }
+    for (const [id, m] of markers) {
+      if (!seen.has(id)) { map.removeLayer(m); markers.delete(id); }
+    }
+    const parked = seen.size - live;
+    countEl.textContent = live + ' live' + (parked ? ', ' + parked + ' not reporting' : '');
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch(FEED_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error('feed returned HTTP ' + res.status);
+      lastBuses = (await res.json()).map(simplify).filter(Boolean);
+      updateLineOptions(lastBuses);
+      render(lastBuses);
+      syncRoute();
+      statusEl.classList.remove('error');
+      updatedEl.textContent = 'Updated ' + new Date().toLocaleTimeString();
+    } catch (err) {
+      statusEl.classList.add('error');
+      updatedEl.textContent = 'No data: ' + err.message;
+    }
+  }
+
+  // ---- Stops and arrival times ----
+
+  let stops = null;
+  let stopsLoading = null;
+  let selectedStop = null;
+  let arrivals = null;
+  let arrivalsError = '';
+  let stopMarker = null;
+
+  function fold(s) {
+    return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  }
+
+  function loadStops() {
+    if (stops) return Promise.resolve(stops);
+    if (!stopsLoading) {
+      stopsLoading = fetch('stops.json')
+        .then((res) => {
+          if (!res.ok) throw new Error('stop list returned HTTP ' + res.status);
+          return res.json();
+        })
+        .then((rows) => {
+          stops = rows.map(([id, name, lat, lon]) => ({ id, name, lat, lon, key: fold(name + ' ' + id) }));
+          return stops;
+        })
+        .catch((err) => { stopsLoading = null; throw err; });
+    }
+    return stopsLoading;
+  }
+
+  async function showSuggestions() {
+    const q = fold(stopInput.value.trim());
+    if (q.length < 2) { stopList.innerHTML = ''; return; }
+    let all;
+    try {
+      all = await loadStops();
+    } catch (err) {
+      stopList.innerHTML = '';
+      arrivalsEl.innerHTML = '<p class="note">Could not load the stop list: ' + escapeHtml(err.message) + '</p>';
+      return;
+    }
+    if (q !== fold(stopInput.value.trim())) return;
+    const hits = all.filter((s) => s.key.includes(q))
+      .sort((a, b) => (fold(b.id) === q) - (fold(a.id) === q) ||
+        fold(b.name).startsWith(q) - fold(a.name).startsWith(q) || a.name.localeCompare(b.name))
+      .slice(0, 6);
+    stopList.innerHTML = hits.map((s) =>
+      '<li><button type="button" data-id="' + escapeHtml(s.id) + '">' + escapeHtml(s.name) +
+      '<small>' + escapeHtml(s.id) + '</small></button></li>').join('');
+  }
+
+  function selectStop(stop, moveMap) {
+    selectedStop = stop;
+    arrivals = null;
+    arrivalsError = '';
+    stopInput.value = stop.name + ' (' + stop.id + ')';
+    stopList.innerHTML = '';
+    save('stop', JSON.stringify({ id: stop.id, name: stop.name, lat: stop.lat, lon: stop.lon }));
+    if (!stopMarker) {
+      stopMarker = L.marker([stop.lat, stop.lon], {
+        icon: L.divIcon({ className: '', iconSize: [18, 18], iconAnchor: [9, 9], html: '<div class="stop-pin"></div>' }),
+        zIndexOffset: 3000,
+      }).addTo(map);
+    } else {
+      stopMarker.setLatLng([stop.lat, stop.lon]);
+    }
+    stopMarker.bindPopup('<b>' + escapeHtml(stop.name) + '</b><br>Stop ' + escapeHtml(stop.id));
+    if (moveMap) focusMap();
+    renderArrivals();
+    refreshArrivals();
+    refreshAnchors();
+  }
+
+  function focusMap() {
+    if (!selectedStop || routeView) return;
+    map.setView([selectedStop.lat, selectedStop.lon], Math.max(map.getZoom(), 16));
+  }
+
+  async function refreshArrivals() {
+    if (!selectedStop || !proxyBase) return;
+    const stopId = selectedStop.id;
+    try {
+      const res = await fetch(proxyBase + '/stops/' + encodeURIComponent(stopId) + '/realtime', { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (!selectedStop || selectedStop.id !== stopId) return;
+      arrivals = data.arrivals || [];
+      arrivalsError = '';
+    } catch (err) {
+      if (!selectedStop || selectedStop.id !== stopId) return;
+      arrivalsError = err.message;
+    }
+    renderArrivals();
+  }
+
+  function minutesText(a) {
+    const m = Math.round(Number(a.arrival_minutes));
+    return m <= 0 ? 'now' : m + ' min';
+  }
+
+  function clockText(a) {
+    const t = a.estimated_arrival_time || a.scheduled_arrival_time;
+    const d = t ? new Date(t) : null;
+    return d && !isNaN(d) ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  }
+
+  function arrivalRow(a) {
+    const bus = lastBuses.find((b) => b.trip && b.trip === a.trip_id);
+    const inner = '<span class="tag">' + escapeHtml(a.route_short_name) + '</span>' +
+      '<span class="to">' + escapeHtml(a.trip_headsign || '') + '</span>' +
+      '<span class="when"><b>' + minutesText(a) + '</b><small>' + clockText(a) + '</small></span>';
+    const style = ' style="--c:' + colorFor(a.route_short_name) + '"';
+    return bus
+      ? '<button type="button" class="arrival" data-bus="' + escapeHtml(bus.id) + '"' + style + '>' +
+        inner + '<span class="go" aria-label="Show route">›</span></button>'
+      : '<div class="arrival"' + style + '>' + inner + '</div>';
+  }
+
+  function renderArrivals() {
+    if (panel.hidden) return;
+    const q = busQuery();
+    const bus = q && lastBuses.find((b) => b.id.toUpperCase() === q);
+    if (bus) { renderRoute(bus); return; }
+
+    if (!proxyBase) {
+      arrivalsEl.innerHTML = '<p class="note">' + (q
+        ? 'Bus ' + escapeHtml(q) + ' is not in service right now. '
+        : 'Tap a bus on the map, or type its number, to see its route and the time to each stop. ') +
+        'Listing every bus due at a stop needs the optional helper (worker.js).</p>';
+      return;
+    }
+    if (!selectedStop) {
+      arrivalsEl.innerHTML = '<p class="note">Tap a bus on the map to see its route, ' +
+        'or pick a stop to see which buses are due there.</p>';
+      return;
+    }
+    if (arrivalsError && !arrivals) {
+      arrivalsEl.innerHTML = '<p class="note">Could not load arrival times: ' + escapeHtml(arrivalsError) + '</p>';
+      return;
+    }
+    if (!arrivals) { arrivalsEl.innerHTML = '<p class="note">Loading arrival times…</p>'; return; }
+
+    let rows = arrivals;
+    let note = '';
+    if (q) {
+      rows = arrivals.filter((a) => String(a.route_short_name).toUpperCase() === q);
+      if (!rows.length) {
+        note = 'Nothing matching "' + q + '" is due at this stop. ' +
+          'A bus number only shows up while that bus is in service.';
+      }
+    } else if (!rows.length) {
+      note = 'No buses are due at this stop right now.';
+    }
+    arrivalsEl.innerHTML = (note ? '<p class="note">' + escapeHtml(note) + '</p>' : '') +
+      rows.map(arrivalRow).join('') +
+      (rows.some((a) => lastBuses.some((b) => b.trip && b.trip === a.trip_id))
+        ? '<p class="fine">Tap a row marked › to follow that bus along its route.</p>' : '');
+  }
+
+  // ---- Route of the selected bus ----
+
+  const routeCache = new Map();
+  const routeLayer = L.layerGroup().addTo(map);
+  let routeView = null;
+
+  // Flat metres, accurate enough around Porto.
+  function toXY(lat, lon) { return [lon * 83820, lat * 111200]; }
+
+  // Nearest point on the route line, as metres travelled from the start of the route.
+  function projectOnto(route, lat, lon, fromSeg) {
+    const [px, py] = toXY(lat, lon);
+    let best = { dist: 0, d2: Infinity, seg: fromSeg };
+    for (let i = fromSeg; i < route.xy.length - 1; i++) {
+      const [ax, ay] = route.xy[i];
+      const dx = route.xy[i + 1][0] - ax;
+      const dy = route.xy[i + 1][1] - ay;
+      const len2 = dx * dx + dy * dy;
+      const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+      const d2 = (px - ax - t * dx) ** 2 + (py - ay - t * dy) ** 2;
+      if (d2 < best.d2) best = { dist: route.cum[i] + t * Math.sqrt(len2), d2, seg: i };
+    }
+    return best;
+  }
+
+  function okJson(res) {
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json();
+  }
+
+  function bundledRoute(line, dir) {
+    return fetch('routes/' + encodeURIComponent(encodeURIComponent(line)) + '_' + dir + '.json')
+      .then(okJson)
+      .then((data) => ({ coords: data.c, stopRows: data.s }));
+  }
+
+  function helperRoute(line, dir) {
+    const base = proxyBase + '/route/' + encodeURIComponent(line);
+    return Promise.all([
+      fetch(base + '/shape?direction_id=' + dir).then(okJson),
+      fetch(base + '/stops/direction?direction_id=' + dir).then(okJson),
+    ]).then(([shape, list]) => {
+      const coords = (shape.coordinates || []).map((c) => [c.lat, c.lng]);
+      const stopRows = (list.stops || []).map((p) => [p.stop_id, p.stop_name, p.stop_lat, p.stop_lon]);
+      if (coords.length < 2 || !stopRows.length) throw new Error('no route data');
+      return { coords, stopRows };
+    });
+  }
+
+  // Bundled file first, then the helper, then the other direction (circular lines have only one).
+  function fetchRouteData(line, dir) {
+    return bundledRoute(line, dir)
+      .catch((err) => { if (!proxyBase) throw err; return helperRoute(line, dir); })
+      .catch(() => bundledRoute(line, 1 - dir))
+      .catch(() => { throw new Error('no route data for line ' + line); });
+  }
+
+  function loadRoute(line, dir) {
+    const key = line + '|' + dir;
+    if (!routeCache.has(key)) {
+      const loading = fetchRouteData(line, dir).then(({ coords, stopRows }) => {
+        const xy = coords.map((c) => toXY(c[0], c[1]));
+        const cum = [0];
+        for (let i = 1; i < xy.length; i++) {
+          cum.push(cum[i - 1] + Math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1]));
+        }
+        const route = { coords, xy, cum };
+        // Stops are in travel order, so each one is searched for from the previous one onwards.
+        let seg = 0;
+        route.stops = stopRows.map(([id, name, lat, lon]) => {
+          const p = projectOnto(route, lat, lon, seg);
+          seg = p.seg;
+          return { id, name, lat, lon, dist: p.dist };
+        });
+        return route;
+      });
+      loading.catch(() => routeCache.delete(key));
+      routeCache.set(key, loading);
+    }
+    return routeCache.get(key);
+  }
+
+  function directionOf(bus) {
+    if (bus.dir === '0' || bus.dir === '1') return Number(bus.dir);
+    const m = /^[^_]+_[0-9]+_([0-9])/.exec(bus.trip || '');
+    return m && m[1] === '2' ? 1 : 0;
+  }
+
+  function clearRoute() {
+    routeLayer.clearLayers();
+    routeView = null;
+  }
+
+  function drawRoute(view) {
+    const color = colorFor(view.line);
+    const path = L.polyline(view.data.coords, { color, weight: 5, opacity: 0.8 }).addTo(routeLayer);
+    view.stopMarkers = view.data.stops.map((s) =>
+      L.circleMarker([s.lat, s.lon], { radius: 5, weight: 2, color, fillColor: '#fff', fillOpacity: 1 })
+        .bindPopup('')
+        .bindTooltip('', { permanent: true, direction: 'right', offset: [7, 0], className: 'stop-label' })
+        .addTo(routeLayer));
+    view.bounds = path.getBounds();
+  }
+
+  async function syncRoute() {
+    const q = busQuery();
+    const bus = q ? lastBuses.find((b) => b.id.toUpperCase() === q) : null;
+    if (!bus) { clearRoute(); renderArrivals(); return; }
+    const dir = directionOf(bus);
+    const key = bus.id + '|' + bus.line + '|' + dir;
+    if (!routeView || routeView.key !== key) {
+      clearRoute();
+      const view = routeView = { key, busId: bus.id, line: bus.line, data: null, anchors: [], checked: false, error: '' };
+      renderArrivals();
+      try { view.data = await loadRoute(bus.line, dir); } catch (err) { view.error = err.message; }
+      if (routeView !== view) return;
+      if (view.data) { drawRoute(view); refreshAnchors(); }
+    }
+    updateRoute();
+    // Fit only after the stop list is on screen, because it changes the map's height.
+    if (routeView && routeView.bounds && !routeView.fitted) {
+      routeView.fitted = true;
+      map.invalidateSize();
+      // Extra room on the right, where the stop labels are drawn.
+      map.fitBounds(routeView.bounds, { paddingTopLeft: [25, 25], paddingBottomRight: [170, 25] });
+    }
+  }
+
+  // Asks STCP when this bus is due at a few stops spread along the rest of its route.
+  async function refreshAnchors() {
+    const view = routeView;
+    if (!view || !view.data) return;
+    if (!proxyBase) { view.checked = true; return; }
+    const bus = lastBuses.find((b) => b.id === view.busId);
+    if (!bus) return;
+    const pos = projectOnto(view.data, bus.lat, bus.lon, 0).dist;
+    const ahead = view.data.stops.filter((s) => s.dist >= pos - 40);
+    const sample = new Set();
+    const n = Math.min(5, ahead.length);
+    for (let i = 0; i < n; i++) sample.add(ahead[Math.round(i * (ahead.length - 1) / Math.max(1, n - 1))]);
+    const chosen = selectedStop && ahead.find((s) => s.id === selectedStop.id);
+    if (chosen) sample.add(chosen);
+    const now = Date.now();
+    const found = await Promise.all([...sample].map(async (s) => {
+      try {
+        const data = await fetch(proxyBase + '/stops/' + encodeURIComponent(s.id) + '/realtime', { cache: 'no-store' }).then(okJson);
+        const hit = (data.arrivals || []).find((a) =>
+          String(a.vehicle_id || '') === bus.id || (bus.trip && a.trip_id === bus.trip));
+        return hit ? { dist: s.dist, at: now + Number(hit.arrival_minutes) * 60000 } : null;
+      } catch (err) {
+        return null;
+      }
+    }));
+    if (routeView !== view) return;
+    view.anchors = found.filter(Boolean).sort((a, b) => a.dist - b.dist);
+    view.checked = true;
+    updateRoute();
+  }
+
+  // Time to every stop: STCP's predictions where we have them, spread by distance in between.
+  function routeEtas(view, bus) {
+    const pos = projectOnto(view.data, bus.lat, bus.lon, 0).dist;
+    const now = Date.now();
+    const pts = [{ dist: pos, at: now }];
+    for (const a of view.anchors) {
+      const prev = pts[pts.length - 1];
+      if (a.dist > prev.dist && a.at >= prev.at) pts.push(a);
+    }
+    const last = pts[pts.length - 1];
+    const known = (last.dist - pos) / 1000;
+    const pace = known > 0.2
+      ? Math.max(1.5, Math.min(10, (last.at - now) / 60000 / known))
+      : DEFAULT_MIN_PER_KM;
+    return view.data.stops.map((stop) => {
+      if (stop.dist < pos - 40) return { stop, passed: true };
+      const d = Math.max(stop.dist, pos);
+      const i = pts.findIndex((p) => p.dist >= d);
+      let at;
+      if (i === -1) at = last.at + (d - last.dist) / 1000 * pace * 60000;
+      else if (i === 0) at = now;
+      else at = pts[i - 1].at + (pts[i].at - pts[i - 1].at) * (d - pts[i - 1].dist) / (pts[i].dist - pts[i - 1].dist);
+      return { stop, passed: false, minutes: Math.max(0, Math.round((at - now) / 60000)) };
+    });
+  }
+
+  function etaText(e) { return e.minutes <= 0 ? 'now' : '~' + e.minutes + ' min'; }
+
+  function updateRoute() {
+    const view = routeView;
+    const bus = view && lastBuses.find((b) => b.id === view.busId);
+    if (view && view.data && bus) {
+      const color = colorFor(view.line);
+      // Labels are always on for the stops ahead; where two would overlap on screen,
+      // the later one is skipped so they stay readable. Zooming in brings it back.
+      const etas = routeEtas(view, bus);
+      const placed = [];
+      const labelled = new Set();
+      const tryLabel = (i) => {
+        const e = etas[i];
+        if (!e || e.passed || labelled.has(i)) return;
+        const pt = map.latLngToContainerPoint(view.stopMarkers[i].getLatLng());
+        // Approximate size of the label box drawn to the right of the stop.
+        const width = Math.min(e.stop.name.length * 6.4, 120) + etaText(e).length * 6.6 + 26;
+        const box = { l: pt.x, r: pt.x + width, t: pt.y - 12, b: pt.y + 12 };
+        if (placed.some((p) => box.l < p.r && p.l < box.r && box.t < p.b && p.t < box.b)) return;
+        placed.push(box);
+        labelled.add(i);
+      };
+      // The stop the user picked gets its label first, then the rest in travel order.
+      if (selectedStop) tryLabel(etas.findIndex((e) => e.stop.id === selectedStop.id));
+      etas.forEach((e, i) => tryLabel(i));
+      etas.forEach((e, i) => {
+        const marker = view.stopMarkers[i];
+        marker.setStyle(e.passed ? { color: '#9aa5b1', fillColor: '#e3e7ec' } : { color, fillColor: '#fff' });
+        marker.setPopupContent('<b>' + escapeHtml(e.stop.name) + '</b><br>' +
+          (e.passed ? 'Bus ' + escapeHtml(bus.id) + ' already passed' : 'Bus ' + escapeHtml(bus.id) + ': ' + etaText(e)));
+        if (labelled.has(i)) {
+          marker.setTooltipContent('<span>' + escapeHtml(e.stop.name) + '</span><b>' + etaText(e) + '</b>');
+          marker.openTooltip();
+        } else {
+          marker.closeTooltip();
+        }
+      });
+    }
+    renderArrivals();
+  }
+
+  function renderRoute(bus) {
+    const view = routeView;
+    const title = 'Bus ' + escapeHtml(bus.id) + ' · line ' + escapeHtml(bus.line);
+    if (!view || (!view.data && !view.error)) {
+      arrivalsEl.innerHTML = '<p class="note">' + title + ': loading its route…</p>';
+      return;
+    }
+    if (view.error) {
+      arrivalsEl.innerHTML = '<p class="note">' + title + ': could not load its route (' + escapeHtml(view.error) + ').</p>';
+      return;
+    }
+    const etas = routeEtas(view, bus);
+    const upcoming = etas.filter((e) => !e.passed);
+    const end = view.data.stops[view.data.stops.length - 1];
+    let headline = title + ' to ' + escapeHtml(end.name);
+    let note = '';
+    if (selectedStop) {
+      const mine = etas.find((e) => e.stop.id === selectedStop.id);
+      if (!mine) note = 'This bus does not stop at ' + selectedStop.name + ' (' + selectedStop.id + ') on its current trip.';
+      else if (mine.passed) note = 'This bus has already passed ' + selectedStop.name + '.';
+      else headline += '<b>' + etaText(mine) + '</b>until ' + escapeHtml(selectedStop.name);
+    }
+    const color = colorFor(view.line);
+    arrivalsEl.innerHTML = '<div class="headline">' + headline + '</div>' +
+      (note ? '<p class="note">' + escapeHtml(note) + '</p>' : '') +
+      upcoming.map((e) =>
+        '<button type="button" class="arrival' + (selectedStop && selectedStop.id === e.stop.id ? ' chosen' : '') +
+        '" data-stop="' + escapeHtml(e.stop.id) + '" style="--c:' + color + '">' +
+        '<span class="dot"></span><span class="to">' + escapeHtml(e.stop.name) + '</span>' +
+        '<span class="when"><b>' + etaText(e) + '</b></span></button>').join('') +
+      '<p class="fine">' + (!proxyBase ? 'Rough estimates from the distance left and a typical bus pace.'
+        : !view.checked ? 'Checking STCP predictions…'
+        : view.anchors.length ? 'Based on STCP predictions for this bus; stops in between are estimated by distance.'
+        : 'STCP has no prediction for this bus right now, so these are rough estimates from distance alone.') +
+      ' Tap a stop to highlight it. Clear the bus number to go back.</p>';
+  }
+
+  map.on('zoomend', () => { if (routeView) updateRoute(); });
+
+  function trackBus(id) {
+    busInput.value = id;
+    save('bus', id);
+    if (panel.hidden) setPanel(true);
+    render(lastBuses);
+    syncRoute();
+  }
+
+  function setPanel(open) {
+    panel.hidden = !open;
+    panelToggle.setAttribute('aria-expanded', String(open));
+    save('panel', open ? '1' : '');
+    map.invalidateSize();
+    if (open) { renderArrivals(); refreshArrivals(); }
+  }
+
+  panelToggle.addEventListener('click', () => setPanel(panel.hidden));
+  stopInput.addEventListener('input', showSuggestions);
+  stopInput.addEventListener('focus', () => stopInput.select());
+  stopList.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    const stop = btn && stops && stops.find((s) => s.id === btn.dataset.id);
+    if (stop) { selectStop(stop, true); stopInput.blur(); }
+  });
+  busInput.addEventListener('input', () => {
+    save('bus', busInput.value.trim());
+    render(lastBuses);
+    syncRoute();
+  });
+  arrivalsEl.addEventListener('click', (e) => {
+    const row = e.target.closest('button.arrival');
+    if (!row) return;
+    if (row.dataset.bus) { trackBus(row.dataset.bus); return; }
+    const stop = routeView && routeView.data && routeView.data.stops.find((s) => s.id === row.dataset.stop);
+    if (stop) selectStop(stop, false);
+  });
+
+  lineSelect.addEventListener('change', () => {
+    selectedLine = lineSelect.value;
+    save('line', selectedLine);
+    render(lastBuses);
+  });
+
+  busInput.value = load('bus');
+  try {
+    const saved = JSON.parse(load('stop') || 'null');
+    if (saved && saved.id) selectStop(saved, false);
+  } catch (e) {}
+  if (load('panel')) setPanel(true);
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { refresh(); if (!panel.hidden) refreshArrivals(); }
+  });
+  setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+  setInterval(() => { if (!document.hidden && !panel.hidden) refreshArrivals(); }, ARRIVALS_REFRESH_MS);
+  setInterval(() => { if (!document.hidden) refreshAnchors(); }, ROUTE_REFRESH_MS);
+  refresh();
+</script>
+</body>
+</html>
