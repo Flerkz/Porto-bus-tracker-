@@ -234,8 +234,6 @@
   .stop-label b { margin-left: 6px; color: #d9741a; }
   .leaflet-container { font-family: inherit; }
   .leaflet-popup-content-wrapper { border-radius: 16px; box-shadow: var(--shadow); color: var(--ink); }
-  .leaflet-marker-icon { transition: transform 1s linear; }
-  .leaflet-zoom-anim .leaflet-marker-icon { transition: none; }
 
   /* Keep the map's own controls clear of the top bar and the bottom sheet. */
   .leaflet-top { top: calc(70px + env(safe-area-inset-top)); }
@@ -423,6 +421,25 @@
     selectedLine = lineSelect.value;
   }
 
+  // Glides a marker to its new position over a second. The position goes through Leaflet on
+  // every frame, so zooming in the middle of a glide keeps the marker where it belongs.
+  function slideTo(marker, to) {
+    const from = marker.getLatLng();
+    if (marker._slide) cancelAnimationFrame(marker._slide);
+    marker._slide = null;
+    if (document.hidden || (from.lat === to[0] && from.lng === to[1])) {
+      marker.setLatLng(to);
+      return;
+    }
+    const start = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - start) / 1000);
+      marker.setLatLng([from.lat + (to[0] - from.lat) * k, from.lng + (to[1] - from.lng) * k]);
+      marker._slide = k < 1 ? requestAnimationFrame(step) : null;
+    };
+    marker._slide = requestAnimationFrame(step);
+  }
+
   function render(buses) {
     const now = Date.now();
     const seen = new Set();
@@ -449,7 +466,7 @@
         m.on('click', () => trackBus(bus.id));
         markers.set(bus.id, m);
       } else {
-        m.setLatLng([bus.lat, bus.lon]);
+        slideTo(m, [bus.lat, bus.lon]);
         if (m._key !== key) m.setIcon(iconFor(bus, stale, tracked));
       }
       m._key = key;
