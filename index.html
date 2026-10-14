@@ -7,72 +7,138 @@
 <title>Porto buses live</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-  html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  body { display: flex; flex-direction: column; background: #12355b; }
-  header {
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 12px; padding-top: calc(8px + env(safe-area-inset-top));
-    color: #fff; background: #12355b;
+  :root {
+    --surface: rgba(255, 255, 255, 0.94); --solid: #fff; --text: #15202b; --muted: #667085;
+    --line: #e6eaf0; --field: #f0f3f7; --accent: #0a5fb4; --accent-deep: #0b3d7a;
+    --chosen: #fff4cc; --shadow: 0 6px 24px rgba(16, 24, 40, 0.16);
+    --sheet-h: 0px;
   }
-  header h1 { font-size: 16px; margin: 0; flex: 1; white-space: nowrap; }
-  select, header button {
-    font-size: 16px; padding: 6px 8px; border-radius: 8px; border: 0;
-    background: #fff; color: #12355b;
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: rgba(24, 30, 38, 0.94); --solid: #181e26; --text: #eef2f6; --muted: #9aa7b5;
+      --line: #2b3542; --field: #252f3b; --accent: #2f7fd1; --accent-deep: #163f6e;
+      --chosen: #3d3612; --shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+    }
   }
-  select { max-width: 34vw; }
-  header button[aria-expanded="true"] { background: #ffd23f; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text); background: var(--solid); overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #map { position: fixed; inset: 0; background: var(--field); }
+  /* The map images only come in a light style, so dark mode recolours them. */
+  @media (prefers-color-scheme: dark) {
+    .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9) saturate(0.7); }
+  }
 
-  #panel { background: #f3f6fa; padding: 10px 12px; display: grid; gap: 8px; }
+  header {
+    position: fixed; z-index: 1000; left: 10px; right: 10px;
+    top: calc(10px + env(safe-area-inset-top));
+    display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 14px;
+    border-radius: 16px; background: var(--surface); box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  }
+  header h1 {
+    font-size: 16px; font-weight: 700; letter-spacing: -0.01em; margin: 0; flex: 1;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  select, header button {
+    font: inherit; font-size: 15px; height: 36px; padding: 0 12px;
+    border-radius: 10px; border: 0; background: var(--field); color: var(--text);
+  }
+  select { max-width: 32vw; }
+  header button { font-weight: 600; background: var(--accent); color: #fff; }
+  header button[aria-expanded="true"] { background: var(--field); color: var(--text); }
+
+  #status {
+    position: fixed; z-index: 999; left: 14px; top: calc(72px + env(safe-area-inset-top));
+    display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+    font-size: 12px; color: var(--muted); background: var(--surface);
+    box-shadow: 0 2px 8px rgba(16, 24, 40, 0.14);
+  }
+  #status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #22a55b; }
+  #count { color: var(--text); font-weight: 600; }
+  #status.error { color: #fff; background: #b42318; }
+  #status.error #count { color: #fff; }
+  #status.error::before { background: #fff; }
+
+  #panel {
+    position: fixed; z-index: 1000; left: 0; right: 0; bottom: 0; box-sizing: border-box;
+    max-height: 46vh; display: flex; flex-direction: column; gap: 8px;
+    padding: 14px 14px calc(12px + env(safe-area-inset-bottom));
+    border-radius: 20px 20px 0 0; background: var(--surface);
+    box-shadow: 0 -6px 24px rgba(16, 24, 40, 0.18);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  }
   #panel[hidden] { display: none; }
+  #panel > * { flex: none; }
   #panel input {
-    width: 100%; box-sizing: border-box; font-size: 16px; padding: 9px 10px;
-    border: 1px solid #b8c4d2; border-radius: 8px; background: #fff; color: #111;
+    width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; height: 44px;
+    padding: 0 14px; border: 1px solid transparent; border-radius: 12px; outline: none;
+    background: var(--field); color: var(--text);
   }
-  #stopList { list-style: none; margin: 4px 0 0; padding: 0; }
+  #panel input::placeholder { color: var(--muted); }
+  #panel input:focus { border-color: var(--accent); background: var(--solid); }
+  #stopList {
+    list-style: none; margin: 6px 0 0; padding: 0; border-radius: 12px; overflow: hidden;
+    background: var(--solid); box-shadow: 0 2px 10px rgba(16, 24, 40, 0.12);
+  }
+  #stopList:empty { display: none; }
   #stopList button {
-    width: 100%; text-align: left; font-size: 15px; padding: 9px 10px;
-    border: 0; border-bottom: 1px solid #dde4ec; background: #fff; color: #111;
+    width: 100%; text-align: left; font: inherit; font-size: 15px; padding: 11px 14px;
+    border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text);
   }
-  #stopList small { color: #5b6b7c; margin-left: 6px; }
-  #arrivals { max-height: 30vh; overflow-y: auto; font-size: 14px; color: #1c2733; }
+  #stopList li:last-child button { border-bottom: 0; }
+  #stopList small { color: var(--muted); margin-left: 8px; }
+  #panel > #arrivals { flex: 1 1 auto; min-height: 0; overflow-y: auto; font-size: 14px; }
   #arrivals:empty { display: none; }
+
   .headline {
-    background: #12355b; color: #fff; border-radius: 10px; padding: 10px 12px;
-    margin-bottom: 8px; font-size: 15px;
+    position: relative; border-radius: 14px; padding: 12px 46px 12px 14px; margin-bottom: 8px;
+    font-size: 13px; line-height: 1.35; color: #fff;
+    background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   }
-  .headline b { font-size: 26px; display: block; }
-  .note { margin: 0 0 8px; color: #44515f; }
+  .headline b { display: block; font-size: 30px; line-height: 1.15; letter-spacing: -0.02em; margin-top: 2px; }
+  .headline .close {
+    position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; padding: 0;
+    border-radius: 50%; border: 0; font-size: 14px; color: #fff; background: rgba(255, 255, 255, 0.2);
+  }
+  .note { margin: 2px 2px 8px; color: var(--muted); line-height: 1.4; }
+  .fine { margin: 8px 2px 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
+
   .arrival {
     display: flex; align-items: center; gap: 10px;
-    padding: 7px 0; border-bottom: 1px solid #dde4ec;
+    padding: 10px 2px; border-bottom: 1px solid var(--line);
+  }
+  button.arrival {
+    width: 100%; border: 0; border-bottom: 1px solid var(--line); background: none;
+    font: inherit; color: inherit; text-align: left;
   }
   .arrival .tag {
     min-width: 40px; text-align: center; font-weight: 700; color: #fff;
-    border-radius: 6px; padding: 3px 4px; background: var(--c);
+    border-radius: 8px; padding: 4px 5px; background: var(--c);
   }
   .arrival .to { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .arrival .when { text-align: right; white-space: nowrap; }
-  .arrival .when b { font-size: 16px; }
-  .arrival .when small { color: #5b6b7c; display: block; }
-  button.arrival {
-    width: 100%; border: 0; border-bottom: 1px solid #dde4ec; background: none;
-    font: inherit; color: inherit; text-align: left;
-  }
-  .arrival .dot {
-    width: 12px; height: 12px; box-sizing: border-box; flex: none;
-    border-radius: 50%; border: 3px solid var(--c); background: #fff;
-  }
-  .arrival.chosen { background: #fff3c4; }
-  .arrival .go { color: #12355b; font-weight: 700; }
-  .fine { margin: 8px 0 0; font-size: 12px; color: #5b6b7c; }
+  .arrival .when b { font-size: 15px; }
+  .arrival .when small { color: var(--muted); display: block; }
+  .arrival .go { color: var(--accent); font-weight: 700; font-size: 18px; }
 
-  #map { flex: 1; min-height: 0; }
-  #status {
-    padding: 6px 12px; padding-bottom: calc(6px + env(safe-area-inset-bottom));
-    font-size: 13px; color: #dbe7f3; background: #12355b;
-    display: flex; justify-content: space-between; gap: 8px;
+  /* The stops ahead, drawn as a line of dots like a route diagram. */
+  .stops button.arrival { position: relative; border-bottom: 0; padding: 9px 8px 9px 2px; border-radius: 10px; }
+  .stops button.arrival::before {
+    content: ""; position: absolute; left: 9px; top: 0; bottom: 0; width: 2px;
+    background: var(--c); opacity: 0.35;
   }
-  #status.error { background: #8a1c1c; color: #fff; }
+  .stops button.arrival:first-child::before { top: 50%; }
+  .stops button.arrival:last-child::before { bottom: 50%; }
+  .arrival .dot {
+    position: relative; z-index: 1; width: 12px; height: 12px; margin-left: 4px;
+    box-sizing: border-box; flex: none; border-radius: 50%;
+    border: 3px solid var(--c); background: var(--solid);
+  }
+  .arrival.chosen { background: var(--chosen); }
 
   .bus { position: relative; width: 40px; height: 40px; }
   .bus .dir {
@@ -86,47 +152,60 @@
   }
   .bus .pill {
     position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-    min-width: 22px; height: 22px; padding: 0 4px; box-sizing: border-box;
-    border-radius: 11px; border: 2px solid #fff; background: var(--c); color: #fff;
-    font-size: 11px; font-weight: 700; line-height: 18px; text-align: center;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+    min-width: 24px; height: 24px; padding: 0 5px; box-sizing: border-box;
+    border-radius: 12px; border: 2px solid #fff; background: var(--c); color: #fff;
+    font-size: 11px; font-weight: 700; line-height: 20px; text-align: center;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
   }
   .bus.stale { opacity: 0.4; }
-  .bus.tracked .pill { border-color: #ffd23f; box-shadow: 0 0 0 4px rgba(255, 210, 63, 0.7), 0 1px 4px rgba(0, 0, 0, 0.45); }
+  .bus.tracked .pill { border-color: #ffd23f; box-shadow: 0 0 0 4px rgba(255, 210, 63, 0.7), 0 2px 6px rgba(0, 0, 0, 0.35); }
   .stop-pin {
     width: 18px; height: 18px; box-sizing: border-box; border-radius: 50%;
     background: #fff; border: 5px solid #d62828; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
   }
   .stop-label {
-    padding: 1px 6px; border-radius: 6px; border: 1px solid #12355b;
-    font-size: 11px; line-height: 1.35; color: #1c2733; white-space: nowrap;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    padding: 2px 7px; border-radius: 8px; border: 0;
+    font-size: 11px; line-height: 1.35; color: #15202b; white-space: nowrap;
+    box-shadow: 0 1px 5px rgba(16, 24, 40, 0.3);
   }
+  .stop-label::before { display: none; }
   .stop-label span {
     display: inline-block; max-width: 120px; overflow: hidden;
     text-overflow: ellipsis; vertical-align: bottom;
   }
-  .stop-label b { margin-left: 5px; color: #12355b; }
+  .stop-label b { margin-left: 5px; color: #0a5fb4; }
   .leaflet-marker-icon { transition: transform 1s linear; }
   .leaflet-zoom-anim .leaflet-marker-icon { transition: none; }
+
+  /* Keep the map's own controls clear of the top bar and the bottom sheet. */
+  .leaflet-top { top: calc(64px + env(safe-area-inset-top)); }
+  .leaflet-bottom { bottom: var(--sheet-h); }
+  .leaflet-control-attribution { font-size: 10px; border-radius: 6px 0 0 0; }
+  @media (pointer: coarse) { .leaflet-control-zoom { display: none; } }
+
+  @media (min-width: 720px) {
+    header { right: auto; width: 380px; box-sizing: border-box; }
+    #panel { left: 10px; right: auto; bottom: 10px; width: 380px; max-height: 62vh; border-radius: 20px; }
+    .leaflet-bottom { bottom: 0; }
+  }
 </style>
 </head>
 <body>
+<div id="map"></div>
 <header>
   <h1>Porto buses</h1>
   <select id="line" aria-label="Filter by line"><option value="">All lines</option></select>
-  <button id="panelToggle" type="button" aria-expanded="false" aria-controls="panel">Arrivals</button>
+  <button id="panelToggle" type="button" aria-expanded="false" aria-controls="panel">Search</button>
 </header>
+<div id="status"><span id="count">Loading…</span><span id="updated"></span></div>
 <section id="panel" hidden>
   <div>
     <input id="stopInput" type="search" placeholder="Stop name or code" autocomplete="off" aria-label="Stop name or code">
     <ul id="stopList"></ul>
   </div>
-  <input id="busInput" type="search" placeholder="Bus number or line, or tap a bus on the map" autocomplete="off" aria-label="Bus or line number">
+  <input id="busInput" type="search" placeholder="Bus number or line, or tap a bus" autocomplete="off" aria-label="Bus or line number">
   <div id="arrivals"></div>
 </section>
-<div id="map"></div>
-<div id="status"><span id="count">Loading…</span><span id="updated"></span></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -169,14 +248,30 @@
   }
 
   const map = L.map('map', { zoomControl: false }).setView([41.155, -8.62], 13);
-  L.control.zoom({ position: 'bottomright' }).addTo(map);
+  L.control.zoom({ position: 'topright' }).addTo(map);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors | Bus data: STCP / Porto Digital',
   }).addTo(map);
 
-  // The arrivals panel grows and shrinks, which changes the map's height.
-  new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+  // The search sheet floats over the map. Its height is published to CSS so the map's
+  // attribution stays visible above it.
+  new ResizeObserver(() => {
+    const h = document.getElementById('panel').offsetHeight;
+    document.documentElement.style.setProperty('--sheet-h', h + 'px');
+  }).observe(document.getElementById('panel'));
+
+  // How much of the map is covered by the top bar and the sheet, for fitting things in view.
+  function viewPadding(extraRight) {
+    const sheet = document.getElementById('panel');
+    const top = document.querySelector('header').getBoundingClientRect().bottom + 14;
+    const wide = window.innerWidth >= 720;
+    const covered = sheet.hidden ? 0 : sheet.offsetHeight;
+    return {
+      paddingTopLeft: [wide && !sheet.hidden ? 410 : 20, top],
+      paddingBottomRight: [20 + (extraRight || 0), (wide ? 0 : covered) + 28],
+    };
+  }
 
   const markers = new Map();
   const lineSelect = document.getElementById('line');
@@ -278,7 +373,7 @@
       if (!seen.has(id)) { map.removeLayer(m); markers.delete(id); }
     }
     const parked = seen.size - live;
-    countEl.textContent = live + ' live' + (parked ? ', ' + parked + ' not reporting' : '');
+    countEl.textContent = live + ' live' + (parked ? ' · ' + parked + ' idle' : '');
   }
 
   async function refresh() {
@@ -290,7 +385,7 @@
       render(lastBuses);
       syncRoute();
       statusEl.classList.remove('error');
-      updatedEl.textContent = 'Updated ' + new Date().toLocaleTimeString();
+      updatedEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch (err) {
       statusEl.classList.add('error');
       updatedEl.textContent = 'No data: ' + err.message;
@@ -372,7 +467,8 @@
 
   function focusMap() {
     if (!selectedStop || routeView) return;
-    map.setView([selectedStop.lat, selectedStop.lon], Math.max(map.getZoom(), 16));
+    const here = [selectedStop.lat, selectedStop.lon];
+    map.fitBounds([here, here], Object.assign(viewPadding(), { maxZoom: Math.max(map.getZoom(), 16) }));
   }
 
   async function refreshArrivals() {
@@ -575,12 +671,12 @@
       if (view.data) { drawRoute(view); refreshAnchors(); }
     }
     updateRoute();
-    // Fit only after the stop list is on screen, because it changes the map's height.
+    // Fit only after the stop list is on screen, so the route clears the sheet.
     if (routeView && routeView.bounds && !routeView.fitted) {
       routeView.fitted = true;
       map.invalidateSize();
       // Extra room on the right, where the stop labels are drawn.
-      map.fitBounds(routeView.bounds, { paddingTopLeft: [25, 25], paddingBottomRight: [170, 25] });
+      map.fitBounds(routeView.bounds, viewPadding(150));
     }
   }
 
@@ -706,18 +802,20 @@
       else headline += '<b>' + etaText(mine) + '</b>until ' + escapeHtml(selectedStop.name);
     }
     const color = colorFor(view.line);
-    arrivalsEl.innerHTML = '<div class="headline">' + headline + '</div>' +
+    arrivalsEl.innerHTML = '<div class="headline">' +
+      '<button type="button" class="close" data-clear aria-label="Stop following this bus">✕</button>' +
+      headline + '</div>' +
       (note ? '<p class="note">' + escapeHtml(note) + '</p>' : '') +
-      upcoming.map((e) =>
+      '<div class="stops">' + upcoming.map((e) =>
         '<button type="button" class="arrival' + (selectedStop && selectedStop.id === e.stop.id ? ' chosen' : '') +
         '" data-stop="' + escapeHtml(e.stop.id) + '" style="--c:' + color + '">' +
         '<span class="dot"></span><span class="to">' + escapeHtml(e.stop.name) + '</span>' +
-        '<span class="when"><b>' + etaText(e) + '</b></span></button>').join('') +
+        '<span class="when"><b>' + etaText(e) + '</b></span></button>').join('') + '</div>' +
       '<p class="fine">' + (!proxyBase ? 'Rough estimates from the distance left and a typical bus pace.'
         : !view.checked ? 'Checking STCP predictions…'
         : view.anchors.length ? 'Based on STCP predictions for this bus; stops in between are estimated by distance.'
         : 'STCP has no prediction for this bus right now, so these are rough estimates from distance alone.') +
-      ' Tap a stop to highlight it. Clear the bus number to go back.</p>';
+      ' Tap a stop to highlight it.</p>';
   }
 
   map.on('zoomend', () => { if (routeView) updateRoute(); });
@@ -733,6 +831,7 @@
   function setPanel(open) {
     panel.hidden = !open;
     panelToggle.setAttribute('aria-expanded', String(open));
+    panelToggle.textContent = open ? 'Close' : 'Search';
     save('panel', open ? '1' : '');
     map.invalidateSize();
     if (open) { renderArrivals(); refreshArrivals(); }
@@ -752,6 +851,13 @@
     syncRoute();
   });
   arrivalsEl.addEventListener('click', (e) => {
+    if (e.target.closest('[data-clear]')) {
+      busInput.value = '';
+      save('bus', '');
+      render(lastBuses);
+      syncRoute();
+      return;
+    }
     const row = e.target.closest('button.arrival');
     if (!row) return;
     if (row.dataset.bus) { trackBus(row.dataset.bus); return; }
