@@ -15,9 +15,11 @@ chosen tab's field is shown, and switching tabs clears the previous search.
   you. The browser asks for permission the first time.
   The location button on the map centres it.
 
-- **Trip search:** type an address and the app finds the direct buses from where you are,
-  fastest first, with the stop to walk to, when the bus gets there, where to get off and the
-  total time. Tap a result to follow that bus.
+- **Trip search:** type an address and press Enter or the arrow. The app goes straight to the
+  best match and lists the buses from where you are, fastest first: direct buses, and trips
+  with one change when they are faster or when no direct bus exists. Each result shows the stop
+  to walk to, when the bus gets there, where to change or get off, and the total time. Tap a
+  result to follow its bus. Other places that matched the address are offered underneath.
 - **Live positions:** every bus currently reporting is shown on the map, labelled with its
   line, and refreshed every 10 seconds.
 - **Follow a bus:** tap a bus, or type its number, to draw its route in orange and mark its
@@ -71,9 +73,15 @@ The app finds where the bus is along its route and measures the distance to each
    choosing the pair with the least walking.
 4. For each such line it picks the nearest live bus that has not yet reached your stop and
    that you can still reach on foot, then adds up waiting, riding and walking.
+5. For trips with one change, it pairs lines near you with lines near the destination where
+   the two meet at a stop, or at two stops up to 200 m apart, in the right order on both.
+   The second bus is a live one that reaches the change stop after you do.
+6. When no bus is on its way yet, for example at a line's first stop, the wait is estimated
+   as half the gap between buses. The gap is the time for a round trip divided by the number
+   of the line's buses running. Such results say "about every N min" and cannot be followed.
 
-Results are sorted by total time. Lines that go there but have no bus on the way are listed
-underneath. If location access is refused, you can move the map and start from its centre.
+Results are sorted by total time. Trips with a change are shown only when they beat the
+fastest direct bus or when there is none. If location access is refused, you can move the map and start from its centre.
 
 **Privacy:** the address you type is sent to OpenStreetMap's search service. Your position is
 used only inside the page and is not sent anywhere.
@@ -151,9 +159,10 @@ These constants are near the top of the script in `index.html`:
 ## Known limits
 
 - **Estimates only:** without the helper, times are based on distance and an average pace.
-- **Direct trips only:** the trip search does not plan journeys that need a change of bus.
-- **Running buses only:** a bus that has not left its first stop yet is not shown, because the
-  app has no timetable.
+- **At most one change:** journeys that need two or more changes are not planned, and only
+  STCP buses are used (no UNIR buses, metro or trains).
+- **No timetable:** a bus that has not left its first stop yet is not visible, so waits for it
+  are estimated from how many buses the line has running.
 - **Trip times are rough:** they use the average pace and straight-line walking distances.
 - **Address search is rate limited:** Nominatim is a shared free service meant for light use.
 - **Data can go stale:** bundled routes and stops reflect the day they were downloaded.
